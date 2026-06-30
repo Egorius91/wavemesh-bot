@@ -17,22 +17,40 @@ fail() {
   exit 1
 }
 
+trim_value() {
+  local value="$1"
+  value="${value//$'\r'/}"
+  value="${value//$'\n'/}"
+  value="${value//[[:space:]]/}"
+  printf '%s' "$value"
+}
+
+validate_bot_token_format() {
+  local token="$1"
+  [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]]
+}
+
 if [[ "${EUID}" -ne 0 ]]; then
   fail "Run as root: sudo bash install.sh"
 fi
 
 read -r -p "Repository URL [${REPO_URL_DEFAULT}]: " REPO_URL
 REPO_URL="${REPO_URL:-$REPO_URL_DEFAULT}"
+REPO_URL="$(trim_value "$REPO_URL")"
 
 read -r -p "Branch [${BRANCH_DEFAULT}]: " BRANCH
 BRANCH="${BRANCH:-$BRANCH_DEFAULT}"
+BRANCH="$(trim_value "$BRANCH")"
 
 read -r -s -p "Telegram BOT_TOKEN: " BOT_TOKEN
 printf '\n'
+BOT_TOKEN="$(trim_value "$BOT_TOKEN")"
 [[ -n "${BOT_TOKEN}" ]] || fail "BOT_TOKEN is required"
+validate_bot_token_format "${BOT_TOKEN}" || fail "BOT_TOKEN format is invalid. Paste the full token from @BotFather, for example 1234567890:AA..."
 
 read -r -p "Admin Telegram IDs, comma-separated without spaces [123456789]: " ADMIN_IDS
 ADMIN_IDS="${ADMIN_IDS:-123456789}"
+ADMIN_IDS="$(trim_value "$ADMIN_IDS")"
 [[ "${ADMIN_IDS}" =~ ^[0-9]+(,[0-9]+)*$ ]] || fail "ADMIN_IDS must look like 123456789 or 123456789,987654321"
 
 log "Installing system packages"
