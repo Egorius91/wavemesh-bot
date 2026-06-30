@@ -1,0 +1,238 @@
+name: Python checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - full-rebrand
+
+jobs:
+  python-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prepare config
+        run: cp config.example.py config.py
+
+      - name: Compile Python files
+        run: python -m compileall .
+
+      - name: Import smoke test
+        run: |
+          python - <<'PY'
+          import importlib
+          import traceback
+          from pathlib import Path
+
+          modules = [
+              'bot.handlers.admin',
+              'bot.handlers.user',
+              'bot.keyboards.admin',
+              'database.requests',
+              'database.db_settings',
+              'bot.services.vpn_api',
+          ]
+
+          logs = []
+          failed = False
+          for module_name in modules:
+              try:
+                  importlib.import_module(module_name)
+                  line = f'import ok: {module_name}'
+                  print(line)
+                  logs.append(line)
+              except Exception:
+                  failed = True
+                  header = f'import failed: {module_name}'
+                  tb = traceback.format_exc()
+                  print(header)
+                  print(tb)
+                  logs.append(header)
+                  logs.append(tb)
+
+          Path('import-smoke.log').write_text('\n'.join(logs) + '\n', encoding='utf-8')
+          if failed:
+              raise SystemExit(1)
+          PY
+
+      - name: Upload import smoke log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: import-smoke-log
+          path: import-smoke.log
+
+      - name: Database migration smoke test
+        run: |
+          rm -f database/wavemesh_bot.db database/wavemesh_bot.db-shm database/wavemesh_bot.db-wal
+          python - <<'PY'
+          import sqlite3
+          from pathlib import Path
+
+          from database.migrations import LATEST_VERSION, run_migrations
+          from database.connection import DB_PATH
+
+          run_migrations()
+
+          required_tables = {
+              'schema_version',
+              'settings',
+              'users',
+              'tariffs',
+              'servers',
+              'vpn_keys',
+              'payments',
+              'pages',
+          }
+
+          if not DB_PATH.exists():
+              raise SystemExit(f'Database was not created: {DB_PATH}')
+
+          conn = sqlite3.connect(DB_PATH)
+          try:
+              tables = {
+                  row[0]
+                  for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+              }
+              missing = required_tables - tables
+              if missing:
+                  raise SystemExit(f'Missing tables after migration: {sorted(missing)}')
+
+              version_row = conn.execute('SELECT version FROM schema_version').fetchone()
+              if not version_row or version_row[0] != LATEST_VERSION:
+                  raise SystemExit(f'Unexpected schema version: {version_row}')
+          finally:
+              conn.close()
+
+          print(f'database migration ok: {DB_PATH}, version={LATEST_VERSION}')
+          PY
+
+      - name: Bot assembly smoke test
+        run: |
+          python - <<'PY'
+          import asyncio
+          from aiogram import Bot, Dispatcher
+          from aiogram.fsm.storage.memory import MemoryStorage
+
+          from config import BOT_TOKEN
+          from bot.handlers.admin import admin_router
+          from bot.handlers.user import router as user_router
+          from bot.middlewares.bot_blocked import BotBlockedResetMiddleware
+          from bot.middlewares.parse_mode_fallback import SafeParseSession
+
+          async def smoke():
+              session = SafeParseSession()
+              bot = Bot(token=BOT_TOKEN, session=session)
+              dp = Dispatcher(storage=MemoryStorage())
+              middleware = BotBlockedResetMiddleware()
+              dp.message.outer_middleware(middleware)
+              dp.callback_query.outer_middleware(middleware)
+              dp.include_router(admin_router)
+              dp.include_router(user_router)
+              await bot.session.close()
+              print('bot assembly ok')
+
+          asyncio.run(smoke())
+          PY
+
+      - name: Check source files for removed admin-agent references
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          patterns = ('yadreno_admin', 'YADRENO_ADMIN', 'admin.yadreno.ru', 'YadrenoAdmin_Bot', 'Ядрёно', 'Ядрено')
+          paths_to_check = [Path('main.py'), Path('config.example.py'), Path('bot'), Path('database')]
+          extensions = {'.py', '.md', '.txt', '.yml', '.yaml'}
+          hits = []
+
+          def iter_files(root: Path):
+              if root.is_file():
+                  yield root
+                  return
+              if root.is_dir():
+                  yield from root.rglob('*')
+
+          for root in paths_to_check:
+              for path in iter_files(root):
+                  if not path.is_file() or path.suffix not in extensions:
+                      continue
+                  if '__pycache__' in path.parts:
+                      continue
+                  text = path.read_text(encoding='utf-8', errors='ignore')
+                  for lineno, line in enumerate(text.splitlines(), 1):
+                      if any(pattern in line for pattern in patterns):
+                          hits.append(f'{path}:{lineno}: {line.strip()}')
+
+          Path('admin-agent-hits.txt').write_text('\n'.join(hits) + ('\n' if hits else ''), encoding='utf-8')
+
+          if hits:
+              print(f'Removed admin-agent references found: {len(hits)}. See admin-agent-hits artifact.')
+              raise SystemExit(1)
+
+          print('removed admin-agent check ok')
+          PY
+
+      - name: Check source files for old project branding
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          patterns = ('YadrenoVPN', 'Yadreno', 'yadreno', 'vpn_bot.db', 'Egorius91/YadrenoVPN')
+          paths_to_check = [Path('README.md'), Path('main.py'), Path('config.example.py'), Path('bot'), Path('database')]
+          extensions = {'.py', '.md', '.txt', '.yml', '.yaml'}
+          hits = []
+
+          def iter_files(root: Path):
+              if root.is_file():
+                  yield root
+                  return
+              if root.is_dir():
+                  yield from root.rglob('*')
+
+          for root in paths_to_check:
+              for path in iter_files(root):
+                  if not path.is_file() or path.suffix not in extensions:
+                      continue
+                  if '__pycache__' in path.parts:
+                      continue
+                  text = path.read_text(encoding='utf-8', errors='ignore')
+                  for lineno, line in enumerate(text.splitlines(), 1):
+                      if any(pattern in line for pattern in patterns):
+                          hits.append(f'{path}:{lineno}: {line.strip()}')
+
+          Path('rebrand-hits.txt').write_text('\n'.join(hits) + ('\n' if hits else ''), encoding='utf-8')
+
+          if hits:
+              print(f'Old project branding references found: {len(hits)}. See rebrand-hits artifact.')
+              raise SystemExit(1)
+
+          print('rebrand check ok')
+          PY
+
+      - name: Upload branding guard hits
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebrand-hits
+          path: rebrand-hits.txt
+
+      - name: Upload admin-agent hits
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-agent-hits
+          path: admin-agent-hits.txt
