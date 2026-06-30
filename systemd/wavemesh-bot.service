@@ -1,0 +1,18 @@
+[Unit]
+Description=WaveMesh Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wavemesh
+Group=wavemesh
+WorkingDirectory=/opt/wavemesh-bot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/wavemesh-bot/.venv/bin/python /opt/wavemesh-bot/main.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
