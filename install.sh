@@ -38,7 +38,7 @@ ADMIN_IDS="${ADMIN_IDS:-123456789}"
 log "Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates git python3 python3-venv python3-pip sqlite3 build-essential
+apt-get install -y --no-install-recommends ca-certificates curl git sudo python3 python3-venv python3-pip sqlite3 build-essential
 
 if ! id -u "${APP_USER}" >/dev/null 2>&1; then
   log "Creating system user ${APP_USER}"
