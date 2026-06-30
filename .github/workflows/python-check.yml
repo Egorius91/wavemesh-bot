@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - full-rebrand
 
 jobs:
   python-checks:
@@ -27,6 +26,28 @@ jobs:
 
       - name: Prepare config
         run: cp config.example.py config.py
+
+      - name: Config smoke test
+        run: |
+          python - <<'PY'
+          import importlib
+
+          config = importlib.import_module('config')
+          required = [
+              'BOT_TOKEN',
+              'ADMIN_IDS',
+              'GITHUB_REPO_URL',
+              'RETRY_CONFIG',
+          ]
+          missing = [name for name in required if not hasattr(config, name)]
+          if missing:
+              raise SystemExit(f'Missing config values: {missing}')
+          if not isinstance(config.ADMIN_IDS, list):
+              raise SystemExit('ADMIN_IDS must be a list')
+          if not isinstance(config.RETRY_CONFIG, dict):
+              raise SystemExit('RETRY_CONFIG must be a dict')
+          print('config smoke ok')
+          PY
 
       - name: Compile Python files
         run: python -m compileall .
@@ -81,8 +102,6 @@ jobs:
           rm -f database/wavemesh_bot.db database/wavemesh_bot.db-shm database/wavemesh_bot.db-wal
           python - <<'PY'
           import sqlite3
-          from pathlib import Path
-
           from database.migrations import LATEST_VERSION, run_migrations
           from database.connection import DB_PATH
 
@@ -149,14 +168,17 @@ jobs:
           asyncio.run(smoke())
           PY
 
+      - name: Shell syntax check
+        run: bash -n install.sh
+
       - name: Check source files for removed admin-agent references
         run: |
           python - <<'PY'
           from pathlib import Path
 
           patterns = ('yadreno_admin', 'YADRENO_ADMIN', 'admin.yadreno.ru', 'YadrenoAdmin_Bot', 'Ядрёно', 'Ядрено')
-          paths_to_check = [Path('main.py'), Path('config.example.py'), Path('bot'), Path('database')]
-          extensions = {'.py', '.md', '.txt', '.yml', '.yaml'}
+          paths_to_check = [Path('main.py'), Path('config.example.py'), Path('bot'), Path('database'), Path('README.md'), Path('docs'), Path('systemd'), Path('install.sh')]
+          extensions = {'.py', '.md', '.txt', '.yml', '.yaml', '.service', '.sh'}
           hits = []
 
           def iter_files(root: Path):
@@ -191,9 +213,9 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          patterns = ('YadrenoVPN', 'Yadreno', 'yadreno', 'vpn_bot.db', 'Egorius91/YadrenoVPN')
-          paths_to_check = [Path('README.md'), Path('main.py'), Path('config.example.py'), Path('bot'), Path('database')]
-          extensions = {'.py', '.md', '.txt', '.yml', '.yaml'}
+          patterns = ('YadrenoVPN', 'Yadreno', 'yadreno', 'plushkinv', 'vpn_bot.db', 'yadreno-vpn.service')
+          paths_to_check = [Path('README.md'), Path('main.py'), Path('config.example.py'), Path('bot'), Path('database'), Path('docs'), Path('systemd'), Path('install.sh')]
+          extensions = {'.py', '.md', '.txt', '.yml', '.yaml', '.service', '.sh'}
           hits = []
 
           def iter_files(root: Path):
