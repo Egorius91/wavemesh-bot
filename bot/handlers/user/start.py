@@ -147,7 +147,6 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                 force_new=True,
             )
             return
-
     await state.clear()
 
     if args and args.startswith('bill'):
@@ -237,10 +236,23 @@ async def _render_help_page(target):
     await render_page(target, page_key='help')
 
 
+async def _render_documents_page(target):
+    """Рендерит страницу документов через render_page."""
+    from bot.utils.page_renderer import render_page
+    await render_page(target, page_key='documents')
+
+
 @router.callback_query(F.data == 'help')
 async def help_handler(callback: CallbackQuery):
     """Показывает справку по кнопке."""
     await _render_help_page(callback)
+    await callback.answer()
+
+
+@router.callback_query(F.data == 'documents')
+async def documents_handler(callback: CallbackQuery):
+    """Показывает страницу документов."""
+    await _render_documents_page(callback)
     await callback.answer()
 
 
