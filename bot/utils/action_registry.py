@@ -24,6 +24,7 @@ ACTION_REGISTRY: Dict[str, str] = {
     "cmd_buy":            "buy_key",
     "cmd_my_keys":        "my_keys",
     "cmd_help":           "help",
+    "cmd_documents":      "documents",
     "cmd_back_main":      "start",
     "cmd_trial":          "trial_subscription",
     "cmd_referral":       "referral_system",
@@ -242,65 +243,36 @@ def _resolve_renew_pay_cardlink(ctx: dict) -> Optional[dict]:
 
 
 def _resolve_renew_pay_demo(ctx: dict) -> Optional[dict]:
-    """Кнопка продления через демонстрационную оплату."""
+    """Кнопка продления через демо-оплату."""
     from database.requests import is_demo_payment_enabled
 
     key_id = _get_renew_key_id(ctx)
     if not key_id or not is_demo_payment_enabled():
         return None
 
-    return {"callback_data": f"renew_demo_tariffs:{key_id}"}
+    return {"callback_data": f"renew_demo_tariff:{key_id}"}
 
 
 def _resolve_renew_pay_balance(ctx: dict) -> Optional[dict]:
-    """Кнопка продления с внутреннего баланса."""
-    from database.requests import (
-        is_referral_enabled, get_referral_reward_type,
-        get_user_balance, get_user_internal_id,
-    )
+    """Кнопка продления с баланса."""
+    from database.requests import is_referral_enabled, get_referral_reward_type
 
     key_id = _get_renew_key_id(ctx)
-    if not key_id:
+    if not key_id or not is_referral_enabled() or get_referral_reward_type() != 'balance':
         return None
 
-    if not is_referral_enabled() or get_referral_reward_type() != 'balance':
-        return None
-
-    telegram_id = ctx.get('telegram_id')
-    if not telegram_id:
-        return None
-
-    user_id = get_user_internal_id(telegram_id)
-    if not user_id:
-        return None
-
-    balance_cents = get_user_balance(user_id)
-    if balance_cents <= 0:
-        return None
-
-    return {"callback_data": f"pay_use_balance:{key_id}"}
+    return {"callback_data": f"renew_use_balance:{key_id}"}
 
 
-def _resolve_renew_back(ctx: dict) -> Optional[dict]:
-    """Кнопка возврата со страницы выбора оплаты продления к ключу."""
-    key_id = _get_renew_key_id(ctx)
-    if not key_id:
-        return None
-
-    return {"callback_data": f"key:{key_id}"}
-
-
-
-# Карта: button_id → handler
-SYSTEM_BUTTONS: Dict[str, Callable[[dict], Optional[dict]]] = {
-    "btn_pay_crypto":  _resolve_pay_crypto,
-    "btn_pay_stars":   _resolve_pay_stars,
-    "btn_pay_cards":   _resolve_pay_cards,
-    "btn_pay_qr":      _resolve_pay_qr,
-    "btn_pay_wata":    _resolve_pay_wata,
+SYSTEM_BUTTONS: Dict[str, Callable[[Dict[str, Any]], Optional[dict]]] = {
+    "btn_pay_crypto": _resolve_pay_crypto,
+    "btn_pay_stars": _resolve_pay_stars,
+    "btn_pay_cards": _resolve_pay_cards,
+    "btn_pay_qr": _resolve_pay_qr,
+    "btn_pay_wata": _resolve_pay_wata,
     "btn_pay_platega": _resolve_pay_platega,
     "btn_pay_cardlink": _resolve_pay_cardlink,
-    "btn_pay_demo":    _resolve_pay_demo,
+    "btn_pay_demo": _resolve_pay_demo,
     "btn_pay_balance": _resolve_pay_balance,
     "btn_renew_pay_crypto": _resolve_renew_pay_crypto,
     "btn_renew_pay_stars": _resolve_renew_pay_stars,
@@ -311,5 +283,4 @@ SYSTEM_BUTTONS: Dict[str, Callable[[dict], Optional[dict]]] = {
     "btn_renew_pay_cardlink": _resolve_renew_pay_cardlink,
     "btn_renew_pay_demo": _resolve_renew_pay_demo,
     "btn_renew_pay_balance": _resolve_renew_pay_balance,
-    "btn_renew_back": _resolve_renew_back,
 }
