@@ -21,14 +21,19 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 ACTION_REGISTRY: Dict[str, str] = {
-    "cmd_buy":            "buy_key",
-    "cmd_my_keys":        "my_keys",
-    "cmd_help":           "help",
-    "cmd_documents":      "documents",
-    "cmd_back_main":      "start",
-    "cmd_trial":          "trial_subscription",
-    "cmd_referral":       "referral_system",
-    "cmd_activate_trial": "trial_activate",
+    "cmd_buy":              "buy_key",
+    "cmd_my_keys":          "my_keys",
+    "cmd_help":             "help",
+    "cmd_download_clients": "download_clients",
+    "cmd_download_ios":     "download_ios",
+    "cmd_download_android": "download_android",
+    "cmd_download_windows": "download_windows",
+    "cmd_download_macos":   "download_macos",
+    "cmd_documents":        "documents",
+    "cmd_back_main":        "start",
+    "cmd_trial":            "trial_subscription",
+    "cmd_referral":         "referral_system",
+    "cmd_activate_trial":   "trial_activate",
 }
 
 
