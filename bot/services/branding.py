@@ -18,6 +18,10 @@ SUPPORT_USERNAME = "@wavemesh"
 SUPPORT_URL = "https://t.me/wavemesh"
 NEWS_URL = "https://t.me/WaveMeshVPN"
 
+# Replace these two constants after publishing the final Telegra.ph articles.
+PRIVACY_POLICY_URL = "https://telegra.ph/Politika-konfidencialnosti-WaveMesh-VPN"
+USER_AGREEMENT_URL = "https://telegra.ph/Polzovatelskoe-soglashenie-WaveMesh-VPN"
+
 MAIN_TEXT = (
     "🌊 <b>Добро пожаловать в WaveMesh VPN</b>\n\n"
     "Быстрый и стабильный VPN-доступ для ваших устройств.\n"
@@ -27,11 +31,12 @@ MAIN_TEXT = (
 
 MAIN_BUTTONS = json.dumps(
     [
-        {"id": "btn_my_keys",  "label": "🔑 Мои ключи",        "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_my_keys"},
-        {"id": "btn_buy_key",  "label": "💳 Купить ключ",       "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "internal", "action_value": "cmd_buy"},
-        {"id": "btn_trial",    "label": "🎁 Пробный доступ",    "color": "secondary", "row": 1, "col": 0, "is_hidden": True,  "action_type": "internal", "action_value": "cmd_trial"},
-        {"id": "btn_referral", "label": "🔗 Реферальная ссылка", "color": "secondary", "row": 2, "col": 0, "is_hidden": True,  "action_type": "internal", "action_value": "cmd_referral"},
-        {"id": "btn_help",     "label": "❓ Справка",            "color": "secondary", "row": 2, "col": 1, "is_hidden": False, "action_type": "internal", "action_value": "cmd_help"},
+        {"id": "btn_my_keys",   "label": "🔑 Мои ключи",        "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_my_keys"},
+        {"id": "btn_buy_key",   "label": "💳 Купить ключ",       "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "internal", "action_value": "cmd_buy"},
+        {"id": "btn_trial",     "label": "🎁 Пробный доступ",    "color": "secondary", "row": 1, "col": 0, "is_hidden": True,  "action_type": "internal", "action_value": "cmd_trial"},
+        {"id": "btn_referral",  "label": "🔗 Реферальная ссылка", "color": "secondary", "row": 2, "col": 0, "is_hidden": True,  "action_type": "internal", "action_value": "cmd_referral"},
+        {"id": "btn_help",      "label": "❓ Справка",            "color": "secondary", "row": 2, "col": 1, "is_hidden": False, "action_type": "internal", "action_value": "cmd_help"},
+        {"id": "btn_documents", "label": "📄 Документы",         "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_documents"},
     ],
     ensure_ascii=False,
 )
@@ -61,6 +66,22 @@ HELP_BUTTONS = json.dumps(
     ensure_ascii=False,
 )
 
+DOCUMENTS_TEXT = (
+    "📄 <b>Документы WaveMesh VPN</b>\n\n"
+    "Перед оформлением подписки ознакомьтесь с документами сервиса.\n\n"
+    "В них описаны правила использования, ограничения ответственности, порядок "
+    "обработки данных и связь с поддержкой."
+)
+
+DOCUMENTS_BUTTONS = json.dumps(
+    [
+        {"id": "btn_privacy_policy", "label": "🔒 Политика конфиденциальности", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": PRIVACY_POLICY_URL},
+        {"id": "btn_user_agreement", "label": "📄 Пользовательское соглашение", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": USER_AGREEMENT_URL},
+        {"id": "btn_back_main",      "label": "🈴 На главную",                  "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_back_main"},
+    ],
+    ensure_ascii=False,
+)
+
 PREPAYMENT_TEXT = (
     "💳 <b>Купить ключ WaveMesh VPN</b>\n\n"
     "🔐 <b>Что вы получаете:</b>\n"
@@ -85,6 +106,7 @@ TRIAL_TEXT = (
 PAGE_DEFAULTS = {
     "main": (MAIN_TEXT, MAIN_BUTTONS),
     "help": (HELP_TEXT, HELP_BUTTONS),
+    "documents": (DOCUMENTS_TEXT, DOCUMENTS_BUTTONS),
     "prepayment": (PREPAYMENT_TEXT, None),
     "trial": (TRIAL_TEXT, None),
 }
