@@ -30,9 +30,12 @@ HIDDIFY_RELEASES_URL = "https://github.com/hiddify/hiddify-app/releases"
 V2RAYNG_RELEASES_URL = "https://github.com/2dust/v2rayNG/releases"
 APP_STORE_REGION_GUIDE_URL = "https://telegra.ph/Kak-izmenit-region-App-Store-dlya-ustanovki-VPN-klientov-07-01-5"
 
-# Pages whose text/buttons are product-critical and should always follow
+MAIN_LOGO_ASSET = "asset_b64:assets/wavemesh-main-logo-16x9.png.b64"
+
+# Pages whose text/buttons/media are product-critical and should always follow
 # branding.py rather than stale admin-customized DB values.
 FORCE_REFRESH_PAGES = {
+    "main",
     "documents",
     "help",
     "download_clients",
@@ -43,9 +46,12 @@ FORCE_REFRESH_PAGES = {
 }
 
 MAIN_TEXT = (
-    "🌊 <b>Добро пожаловать в WaveMesh VPN</b>\n\n"
-    "Быстрый и стабильный VPN-доступ для ваших устройств.\n"
-    "Выберите тариф, получите ключ и подключайтесь за пару минут.\n\n"
+    "🌊 <b>WaveMesh VPN</b>\n\n"
+    "Спокойный и надёжный VPN-доступ для телефона, компьютера и планшета.\n\n"
+    "Подключение занимает пару минут: выберите тариф, получите личный ключ "
+    "и добавьте его в удобный VPN-клиент.\n\n"
+    "Работает на iPhone, Android, Windows и macOS. Если возникнут трудности, "
+    f"поддержка {SUPPORT_USERNAME} поможет с настройкой.\n\n"
     "%тарифы%"
 )
 
@@ -202,16 +208,16 @@ TRIAL_TEXT = (
 )
 
 PAGE_DEFAULTS = {
-    "main": (MAIN_TEXT, MAIN_BUTTONS),
-    "help": (HELP_TEXT, HELP_BUTTONS),
-    "download_clients": (DOWNLOAD_CLIENTS_TEXT, DOWNLOAD_CLIENTS_BUTTONS),
-    "download_ios": (DOWNLOAD_IOS_TEXT, DOWNLOAD_IOS_BUTTONS),
-    "download_android": (DOWNLOAD_ANDROID_TEXT, DOWNLOAD_ANDROID_BUTTONS),
-    "download_windows": (DOWNLOAD_WINDOWS_TEXT, DOWNLOAD_WINDOWS_BUTTONS),
-    "download_macos": (DOWNLOAD_MACOS_TEXT, DOWNLOAD_MACOS_BUTTONS),
-    "documents": (DOCUMENTS_TEXT, DOCUMENTS_BUTTONS),
-    "prepayment": (PREPAYMENT_TEXT, None),
-    "trial": (TRIAL_TEXT, None),
+    "main": (MAIN_TEXT, MAIN_BUTTONS, MAIN_LOGO_ASSET, "photo"),
+    "help": (HELP_TEXT, HELP_BUTTONS, None, None),
+    "download_clients": (DOWNLOAD_CLIENTS_TEXT, DOWNLOAD_CLIENTS_BUTTONS, None, None),
+    "download_ios": (DOWNLOAD_IOS_TEXT, DOWNLOAD_IOS_BUTTONS, None, None),
+    "download_android": (DOWNLOAD_ANDROID_TEXT, DOWNLOAD_ANDROID_BUTTONS, None, None),
+    "download_windows": (DOWNLOAD_WINDOWS_TEXT, DOWNLOAD_WINDOWS_BUTTONS, None, None),
+    "download_macos": (DOWNLOAD_MACOS_TEXT, DOWNLOAD_MACOS_BUTTONS, None, None),
+    "documents": (DOCUMENTS_TEXT, DOCUMENTS_BUTTONS, None, None),
+    "prepayment": (PREPAYMENT_TEXT, None, None, None),
+    "trial": (TRIAL_TEXT, None, None, None),
 }
 
 LEGACY_MARKERS = (
@@ -231,7 +237,13 @@ def _needs_replacement(value: str | None) -> bool:
     return any(marker in value for marker in LEGACY_MARKERS)
 
 
-def _update_page(page_key: str, text: str, buttons: str | None) -> None:
+def _update_page(
+    page_key: str,
+    text: str,
+    buttons: str | None,
+    image: str | None = None,
+    media_type: str | None = None,
+) -> None:
     with get_db() as conn:
         force_refresh = page_key in FORCE_REFRESH_PAGES
 
@@ -246,15 +258,21 @@ def _update_page(page_key: str, text: str, buttons: str | None) -> None:
 
         conn.execute(
             """
-            INSERT OR IGNORE INTO pages (page_key, text_default, buttons_default)
-            VALUES (?, ?, ?)
+            INSERT OR IGNORE INTO pages (
+                page_key,
+                text_default,
+                buttons_default,
+                image_default,
+                media_type_default
+            )
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (page_key, text, buttons_to_insert),
+            (page_key, text, buttons_to_insert, image, media_type),
         )
 
         row = conn.execute(
             """
-            SELECT text_custom, buttons_custom, buttons_default
+            SELECT text_custom, buttons_custom, buttons_default, image_custom
             FROM pages
             WHERE page_key = ?
             """,
@@ -268,24 +286,35 @@ def _update_page(page_key: str, text: str, buttons: str | None) -> None:
 
         update_custom_text = force_refresh or _needs_replacement(text_custom)
         update_custom_buttons = buttons is not None and (force_refresh or _needs_replacement(buttons_custom))
+        update_custom_image = force_refresh and image is not None
 
         conn.execute(
             """
             UPDATE pages
             SET text_default = ?,
                 buttons_default = ?,
+                image_default = ?,
+                media_type_default = ?,
                 text_custom = CASE WHEN ? THEN ? ELSE text_custom END,
                 buttons_custom = CASE WHEN ? THEN ? ELSE buttons_custom END,
+                image_custom = CASE WHEN ? THEN ? ELSE image_custom END,
+                media_type_custom = CASE WHEN ? THEN ? ELSE media_type_custom END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE page_key = ?
             """,
             (
                 text,
                 next_buttons,
+                image,
+                media_type,
                 1 if update_custom_text else 0,
                 text,
                 1 if update_custom_buttons else 0,
                 next_buttons,
+                1 if update_custom_image else 0,
+                image,
+                1 if update_custom_image else 0,
+                media_type,
                 page_key,
             ),
         )
@@ -293,7 +322,7 @@ def _update_page(page_key: str, text: str, buttons: str | None) -> None:
 
 def apply_wavemesh_branding_defaults() -> None:
     """Apply WaveMesh user-facing defaults to the pages table."""
-    for page_key, (text, buttons) in PAGE_DEFAULTS.items():
-        _update_page(page_key, text, buttons)
+    for page_key, (text, buttons, image, media_type) in PAGE_DEFAULTS.items():
+        _update_page(page_key, text, buttons, image, media_type)
 
     logger.info("WaveMesh branding defaults applied to core user pages")
