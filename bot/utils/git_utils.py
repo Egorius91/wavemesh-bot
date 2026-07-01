@@ -23,6 +23,34 @@ def get_project_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def _ownership_help_message(raw_output: str) -> str:
+    project_root = get_project_root()
+    return (
+        "❌ Git не может обновить проект из-за прав доступа или владельца файлов.\n\n"
+        "Чаще всего это происходит, если репозиторий вручную обновляли через "
+        "<code>sudo git pull</code>, а сам бот работает от пользователя <code>wavemesh</code>.\n\n"
+        "Выполните на VPS:\n"
+        f"<pre>sudo chown -R wavemesh:wavemesh {project_root}\n"
+        f"sudo -u wavemesh git -C {project_root} status</pre>\n"
+        "После этого повторите обновление из бота.\n\n"
+        "Технический вывод Git:\n"
+        f"<pre>{raw_output[:2500]}</pre>"
+    )
+
+
+def _format_git_error(output: str) -> str:
+    lowered = output.lower()
+    if (
+        "dubious ownership" in lowered
+        or "permission denied" in lowered
+        or "unable to create" in lowered
+        or "could not lock config file" in lowered
+        or "insufficient permission" in lowered
+    ):
+        return _ownership_help_message(output)
+    return output
+
+
 def run_git_command(args: List[str], timeout: int = 30) -> Tuple[bool, str]:
     """
     Выполняет git-команду.
@@ -34,18 +62,22 @@ def run_git_command(args: List[str], timeout: int = 30) -> Tuple[bool, str]:
     Returns:
         (success, output) - успех и вывод команды
     """
+    project_root = get_project_root()
     try:
         result = subprocess.run(
-            ['git'] + args,
-            cwd=get_project_root(),
+            ['git', '-c', f'safe.directory={project_root}'] + args,
+            cwd=project_root,
             capture_output=True,
             text=True,
             encoding='utf-8',
             timeout=timeout
         )
         output = result.stdout + result.stderr
+        output = output.strip()
         success = result.returncode == 0
-        return success, output.strip()
+        if not success:
+            output = _format_git_error(output)
+        return success, output
     except subprocess.TimeoutExpired:
         return False, "⏱ Превышено время ожидания команды"
     except FileNotFoundError:
@@ -277,7 +309,8 @@ def pull_updates() -> Tuple[bool, str]:
     if success and status.strip():
         return False, "❌ Есть локальные изменения. Сделайте commit или stash перед обновлением."
     
-    success, output = run_git_command(['pull', 'origin'], timeout=120)
+    branch = get_current_branch() or 'main'
+    success, output = run_git_command(['pull', '--ff-only', 'origin', branch], timeout=120)
     
     if not success:
         if 'conflict' in output.lower():
@@ -382,9 +415,10 @@ def install_requirements() -> Tuple[bool, str]:
 
 def restart_bot() -> None:
     """
-    Перезапускает бота, заменяя текущий процесс.
+    Перезапускает бота, заменяя текущий процесс новым.
 
-    Использует os.execv для замены текущего процесса новым.
+    Для systemd-сервиса это достаточно: процесс остаётся тем же unit'ом,
+    но код main.py загружается заново уже из обновлённого дерева.
     """
     logger.info("🔄 Перезапуск бота...")
     
