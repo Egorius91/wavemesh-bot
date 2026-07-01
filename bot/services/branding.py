@@ -30,8 +30,6 @@ HIDDIFY_RELEASES_URL = "https://github.com/hiddify/hiddify-app/releases"
 V2RAYNG_RELEASES_URL = "https://github.com/2dust/v2rayNG/releases"
 APP_STORE_REGION_GUIDE_URL = "https://telegra.ph/Kak-izmenit-region-App-Store-dlya-ustanovki-VPN-klientov-07-01-5"
 
-MAIN_LOGO_ASSET = "asset_b64:assets/wavemesh-main-logo-16x9.png.b64"
-
 # Pages whose text/buttons/media are product-critical and should always follow
 # branding.py rather than stale admin-customized DB values.
 FORCE_REFRESH_PAGES = {
@@ -208,7 +206,7 @@ TRIAL_TEXT = (
 )
 
 PAGE_DEFAULTS = {
-    "main": (MAIN_TEXT, MAIN_BUTTONS, MAIN_LOGO_ASSET, "photo"),
+    "main": (MAIN_TEXT, MAIN_BUTTONS, None, None),
     "help": (HELP_TEXT, HELP_BUTTONS, None, None),
     "download_clients": (DOWNLOAD_CLIENTS_TEXT, DOWNLOAD_CLIENTS_BUTTONS, None, None),
     "download_ios": (DOWNLOAD_IOS_TEXT, DOWNLOAD_IOS_BUTTONS, None, None),
@@ -272,7 +270,7 @@ def _update_page(
 
         row = conn.execute(
             """
-            SELECT text_custom, buttons_custom, buttons_default, image_custom
+            SELECT text_custom, buttons_custom, buttons_default
             FROM pages
             WHERE page_key = ?
             """,
@@ -286,7 +284,7 @@ def _update_page(
 
         update_custom_text = force_refresh or _needs_replacement(text_custom)
         update_custom_buttons = buttons is not None and (force_refresh or _needs_replacement(buttons_custom))
-        update_custom_image = force_refresh and image is not None
+        update_custom_image = force_refresh
 
         conn.execute(
             """
