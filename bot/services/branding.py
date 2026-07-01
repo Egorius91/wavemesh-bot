@@ -22,6 +22,10 @@ PRIVACY_POLICY_URL = "https://telegra.ph/Politika-konfidencialnosti-WaveMesh-VPN
 USER_AGREEMENT_URL = "https://telegra.ph/Polzovatelskoe-soglashenie-WaveMesh-VPN-07-01"
 REFUND_POLICY_URL = "https://telegra.ph/Pravila-vozvrata-denezhnyh-sredstv-WaveMesh-VPN-07-01"
 
+# Pages whose text/buttons are product-critical and should always follow
+# branding.py rather than stale admin-customized DB values.
+FORCE_REFRESH_PAGES = {"documents"}
+
 MAIN_TEXT = (
     "🌊 <b>Добро пожаловать в WaveMesh VPN</b>\n\n"
     "Быстрый и стабильный VPN-доступ для ваших устройств.\n"
@@ -121,6 +125,8 @@ LEGACY_MARKERS = (
     "yadreno",
     "VPN-бот",
     "telegra.ph/Kak-nastroit-VPN-Gajd-za-2-minuty-01-23",
+    "telegra.ph/Politika-konfidencialnosti-WaveMesh-VPN\"",
+    "telegra.ph/Polzovatelskoe-soglashenie-WaveMesh-VPN\"",
 )
 
 
@@ -132,6 +138,8 @@ def _needs_replacement(value: str | None) -> bool:
 
 def _update_page(page_key: str, text: str, buttons: str | None) -> None:
     with get_db() as conn:
+        force_refresh = page_key in FORCE_REFRESH_PAGES
+
         if buttons is None:
             existing = conn.execute(
                 "SELECT buttons_default FROM pages WHERE page_key = ?",
@@ -163,8 +171,8 @@ def _update_page(page_key: str, text: str, buttons: str | None) -> None:
         current_buttons_default = row["buttons_default"] if row else buttons_to_insert
         next_buttons = buttons if buttons is not None else current_buttons_default
 
-        update_custom_text = _needs_replacement(text_custom)
-        update_custom_buttons = buttons is not None and _needs_replacement(buttons_custom)
+        update_custom_text = force_refresh or _needs_replacement(text_custom)
+        update_custom_buttons = buttons is not None and (force_refresh or _needs_replacement(buttons_custom))
 
         conn.execute(
             """
