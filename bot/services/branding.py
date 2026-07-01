@@ -28,9 +28,7 @@ V2BOX_IOS_URL = "https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690"
 HIDDIFY_URL = "https://hiddify.com/"
 HIDDIFY_RELEASES_URL = "https://github.com/hiddify/hiddify-app/releases"
 V2RAYNG_RELEASES_URL = "https://github.com/2dust/v2rayNG/releases"
-
-# Placeholder for stage 2. Replace after the App Store region article is published.
-APP_STORE_REGION_GUIDE_URL = "https://telegra.ph/Kak-izmenit-region-App-Store-WaveMesh-VPN"
+APP_STORE_REGION_GUIDE_URL = "https://telegra.ph/Kak-izmenit-region-App-Store-dlya-ustanovki-VPN-klientov-07-01-5"
 
 # Pages whose text/buttons are product-critical and should always follow
 # branding.py rather than stale admin-customized DB values.
@@ -102,7 +100,7 @@ DOWNLOAD_IOS_TEXT = (
     "🍎 <b>iPhone / iPad</b>\n\n"
     "Для устройств Apple можно использовать Happ, Streisand или V2Box.\n\n"
     "Если приложение не отображается в App Store, проверьте регион Apple ID. "
-    "Отдельная инструкция по смене региона будет добавлена следующим этапом."
+    "Нажмите кнопку ниже, чтобы открыть подробную инструкцию."
 )
 
 DOWNLOAD_IOS_BUTTONS = json.dumps(
