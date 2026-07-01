@@ -1,5 +1,5 @@
 """
-Точка входа VPN Telegram бота.
+Точка входа WaveMesh Telegram бота.
 
 Инициализирует бота, диспетчер, применяет миграции и запускает polling.
 """
@@ -14,6 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN
 from database.migrations import run_migrations
+from bot.services.branding import apply_wavemesh_branding_defaults
 
 from bot.services.vpn_api import close_all_clients
 from bot.services.scheduler import run_daily_tasks, run_update_check_scheduler, run_traffic_sync_scheduler
@@ -57,6 +58,7 @@ async def on_startup(bot: Bot):
     
     # Применяем миграции БД
     run_migrations()
+    apply_wavemesh_branding_defaults()
     
     # Информация о боте
     bot_info = await bot.get_me()
