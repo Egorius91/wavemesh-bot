@@ -18,9 +18,9 @@ SUPPORT_USERNAME = "@wavemesh"
 SUPPORT_URL = "https://t.me/wavemesh"
 NEWS_URL = "https://t.me/WaveMeshVPN"
 
-# Replace these two constants after publishing the final Telegra.ph articles.
-PRIVACY_POLICY_URL = "https://telegra.ph/Politika-konfidencialnosti-WaveMesh-VPN"
-USER_AGREEMENT_URL = "https://telegra.ph/Polzovatelskoe-soglashenie-WaveMesh-VPN"
+PRIVACY_POLICY_URL = "https://telegra.ph/Politika-konfidencialnosti-WaveMesh-VPN-07-01"
+USER_AGREEMENT_URL = "https://telegra.ph/Polzovatelskoe-soglashenie-WaveMesh-VPN-07-01"
+REFUND_POLICY_URL = "https://telegra.ph/Pravila-vozvrata-denezhnyh-sredstv-WaveMesh-VPN-07-01"
 
 MAIN_TEXT = (
     "🌊 <b>Добро пожаловать в WaveMesh VPN</b>\n\n"
@@ -68,16 +68,20 @@ HELP_BUTTONS = json.dumps(
 
 DOCUMENTS_TEXT = (
     "📄 <b>Документы WaveMesh VPN</b>\n\n"
-    "Перед оформлением подписки ознакомьтесь с документами сервиса.\n\n"
-    "В них описаны правила использования, ограничения ответственности, порядок "
-    "обработки данных и связь с поддержкой."
+    "Перед использованием сервиса рекомендуем ознакомиться с основными документами.\n\n"
+    "Здесь собраны:\n\n"
+    "• Пользовательское соглашение — условия использования сервиса.\n"
+    "• Политика конфиденциальности — сведения об обработке пользовательских данных.\n"
+    "• Правила возврата денежных средств — порядок рассмотрения обращений по вопросам возврата оплаты.\n\n"
+    f"Если у вас возникли вопросы, вы всегда можете обратиться в поддержку {SUPPORT_USERNAME}."
 )
 
 DOCUMENTS_BUTTONS = json.dumps(
     [
         {"id": "btn_privacy_policy", "label": "🔒 Политика конфиденциальности", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": PRIVACY_POLICY_URL},
         {"id": "btn_user_agreement", "label": "📄 Пользовательское соглашение", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": USER_AGREEMENT_URL},
-        {"id": "btn_back_main",      "label": "🈴 На главную",                  "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_back_main"},
+        {"id": "btn_refund_policy", "label": "💳 Правила возврата", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "url", "action_value": REFUND_POLICY_URL},
+        {"id": "btn_back_main",      "label": "🈴 На главную",                  "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_back_main"},
     ],
     ensure_ascii=False,
 )
