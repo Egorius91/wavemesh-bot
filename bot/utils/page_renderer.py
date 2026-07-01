@@ -5,15 +5,18 @@
 Реализует трёхслойную систему видимости кнопок:
   1. buttons_default.is_hidden — дефолт разработчика
   2. buttons_custom (мёрж по id) — кастомизация админа
-  3. runtime — visibility dict (для internal) и system handlers (для system)
+  3. runtime — visibility dict (для internal) и system handlers
 """
+import base64
 import json
 import logging
+from pathlib import Path
 from typing import Optional, Dict, List, Any
 
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardButton, InlineKeyboardMarkup,
+    BufferedInputFile,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -24,6 +27,46 @@ logger = logging.getLogger(__name__)
 # Максимальное количество кнопок в одном ряду
 MAX_BUTTONS_PER_ROW = 2
 PAGE_MEDIA_TYPES = {'photo', 'video', 'animation'}
+ASSET_B64_PREFIX = 'asset_b64:'
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _load_asset_b64_media(value: str):
+    """Загружает bundled base64 asset и возвращает Telegram InputFile."""
+    relative_path = value[len(ASSET_B64_PREFIX):].strip().lstrip('/').replace('\\', '/')
+    if not relative_path:
+        return None
+
+    project_root = _project_root()
+    asset_path = (project_root / relative_path).resolve()
+
+    try:
+        asset_path.relative_to(project_root)
+    except ValueError:
+        logger.warning("Попытка загрузить asset за пределами проекта: %s", relative_path)
+        return None
+
+    try:
+        encoded = asset_path.read_text(encoding='utf-8').strip()
+        data = base64.b64decode(encoded, validate=True)
+    except Exception as e:
+        logger.warning("Не удалось загрузить base64 asset %s: %s", relative_path, e)
+        return None
+
+    filename = asset_path.name.removesuffix('.b64') or 'page-media.png'
+    return BufferedInputFile(data, filename=filename)
+
+
+def _resolve_page_media_value(value: Optional[str]):
+    """Преобразует служебные значения медиа страницы в объект для Telegram."""
+    if not value:
+        return None
+    if isinstance(value, str) and value.startswith(ASSET_B64_PREFIX):
+        return _load_asset_b64_media(value)
+    return value
 
 
 def _normalize_page_media_type(media_type: Optional[str], media_file_id: Optional[str]) -> Optional[str]:
@@ -592,7 +635,7 @@ async def render_page(
     )
 
     # 4. Определяем медиа
-    image = page_data.get("image")
+    image = _resolve_page_media_value(page_data.get("image"))
     media_type = page_data.get("media_type")
 
     # 5. Отправляем/редактируем
