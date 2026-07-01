@@ -230,16 +230,20 @@ async def cmd_id(message: Message):
     await safe_edit_or_send(message, text, force_new=True)
 
 
+async def _render_page(target, page_key: str):
+    """Рендерит произвольную статическую страницу через render_page."""
+    from bot.utils.page_renderer import render_page
+    await render_page(target, page_key=page_key)
+
+
 async def _render_help_page(target):
     """Рендерит страницу справки через render_page."""
-    from bot.utils.page_renderer import render_page
-    await render_page(target, page_key='help')
+    await _render_page(target, 'help')
 
 
 async def _render_documents_page(target):
     """Рендерит страницу документов через render_page."""
-    from bot.utils.page_renderer import render_page
-    await render_page(target, page_key='documents')
+    await _render_page(target, 'documents')
 
 
 @router.callback_query(F.data == 'help')
@@ -253,6 +257,20 @@ async def help_handler(callback: CallbackQuery):
 async def documents_handler(callback: CallbackQuery):
     """Показывает страницу документов."""
     await _render_documents_page(callback)
+    await callback.answer()
+
+
+@router.callback_query(F.data.in_({'download_clients', 'download_ios', 'download_android', 'download_windows', 'download_macos'}))
+async def download_pages_handler(callback: CallbackQuery):
+    """Показывает страницы загрузки VPN-клиентов."""
+    page_map = {
+        'download_clients': 'download_clients',
+        'download_ios': 'download_ios',
+        'download_android': 'download_android',
+        'download_windows': 'download_windows',
+        'download_macos': 'download_macos',
+    }
+    await _render_page(callback, page_map[callback.data])
     await callback.answer()
 
 
