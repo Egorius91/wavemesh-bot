@@ -22,9 +22,27 @@ PRIVACY_POLICY_URL = "https://telegra.ph/Politika-konfidencialnosti-WaveMesh-VPN
 USER_AGREEMENT_URL = "https://telegra.ph/Polzovatelskoe-soglashenie-WaveMesh-VPN-07-01"
 REFUND_POLICY_URL = "https://telegra.ph/Pravila-vozvrata-denezhnyh-sredstv-WaveMesh-VPN-07-01"
 
+HAPP_URL = "https://happ.info/"
+STREISAND_IOS_URL = "https://apps.apple.com/us/app/streisand/id6450534064"
+V2BOX_IOS_URL = "https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690"
+HIDDIFY_URL = "https://hiddify.com/"
+HIDDIFY_RELEASES_URL = "https://github.com/hiddify/hiddify-app/releases"
+V2RAYNG_RELEASES_URL = "https://github.com/2dust/v2rayNG/releases"
+
+# Placeholder for stage 2. Replace after the App Store region article is published.
+APP_STORE_REGION_GUIDE_URL = "https://telegra.ph/Kak-izmenit-region-App-Store-WaveMesh-VPN"
+
 # Pages whose text/buttons are product-critical and should always follow
 # branding.py rather than stale admin-customized DB values.
-FORCE_REFRESH_PAGES = {"documents"}
+FORCE_REFRESH_PAGES = {
+    "documents",
+    "help",
+    "download_clients",
+    "download_ios",
+    "download_android",
+    "download_windows",
+    "download_macos",
+}
 
 MAIN_TEXT = (
     "🌊 <b>Добро пожаловать в WaveMesh VPN</b>\n\n"
@@ -46,26 +64,100 @@ MAIN_BUTTONS = json.dumps(
 )
 
 HELP_TEXT = (
-    "🔐 <b>Как подключить WaveMesh VPN</b>\n\n"
-    "1. Оформите подписку или активируйте пробный доступ.\n"
-    "2. Откройте раздел «Мои ключи» и выберите свой ключ.\n"
-    "3. Скопируйте ссылку подключения или импортируйте её в VPN-клиент.\n"
-    "4. Включите подключение и дождитесь статуса Connected.\n\n"
-    "<b>Рекомендуемые клиенты:</b>\n"
-    "• iPhone / iPad: Happ, Streisand или V2Box.\n"
-    "• Android: Happ, v2rayNG или Hiddify.\n"
-    "• Windows / macOS: Hiddify, Happ или совместимый клиент.\n\n"
-    "Если подключение не работает, обновите ключ в боте, проверьте активность подписки "
-    "и попробуйте другой клиент или сервер.\n\n"
-    f"💬 Поддержка: {SUPPORT_USERNAME}\n"
-    f"📢 Новости: {NEWS_URL}"
+    "🔐 <b>Справка WaveMesh VPN</b>\n\n"
+    "Здесь собраны основные инструкции для подключения и управления доступом.\n\n"
+    "Начните с раздела загрузки клиента, затем откройте «Мои ключи», скопируйте ссылку подключения "
+    "и импортируйте её в выбранное приложение."
 )
 
 HELP_BUTTONS = json.dumps(
     [
-        {"id": "btn_news",      "label": "📢 Новости",    "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": NEWS_URL},
-        {"id": "btn_support",   "label": "💬 Поддержка",  "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": SUPPORT_URL},
-        {"id": "btn_back_main", "label": "🈴 На главную", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_back_main"},
+        {"id": "btn_download_clients", "label": "📱 Скачать VPN-клиент", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
+        {"id": "btn_news",             "label": "📢 Новости",             "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": NEWS_URL},
+        {"id": "btn_support",          "label": "💬 Поддержка",           "color": "secondary", "row": 1, "col": 1, "is_hidden": False, "action_type": "url", "action_value": SUPPORT_URL},
+        {"id": "btn_back_main",        "label": "🈴 На главную",          "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_back_main"},
+    ],
+    ensure_ascii=False,
+)
+
+DOWNLOAD_CLIENTS_TEXT = (
+    "📱 <b>Скачать VPN-клиент</b>\n\n"
+    "Выберите платформу, на которой хотите подключить WaveMesh VPN.\n\n"
+    "После установки приложения откройте раздел «Мои ключи», скопируйте ссылку подключения "
+    "и импортируйте её в выбранный клиент."
+)
+
+DOWNLOAD_CLIENTS_BUTTONS = json.dumps(
+    [
+        {"id": "btn_download_ios",     "label": "🍎 iPhone / iPad", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_ios"},
+        {"id": "btn_download_android", "label": "🤖 Android",        "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_android"},
+        {"id": "btn_download_windows", "label": "💻 Windows",        "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_windows"},
+        {"id": "btn_download_macos",   "label": "🖥 macOS",          "color": "secondary", "row": 1, "col": 1, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_macos"},
+        {"id": "btn_back_help",        "label": "⬅️ Назад",          "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_help"},
+    ],
+    ensure_ascii=False,
+)
+
+DOWNLOAD_IOS_TEXT = (
+    "🍎 <b>iPhone / iPad</b>\n\n"
+    "Для устройств Apple можно использовать Happ, Streisand или V2Box.\n\n"
+    "Если приложение не отображается в App Store, проверьте регион Apple ID. "
+    "Отдельная инструкция по смене региона будет добавлена следующим этапом."
+)
+
+DOWNLOAD_IOS_BUTTONS = json.dumps(
+    [
+        {"id": "btn_happ_ios",          "label": "Happ",                         "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HAPP_URL},
+        {"id": "btn_streisand_ios",     "label": "Streisand",                    "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": STREISAND_IOS_URL},
+        {"id": "btn_v2box_ios",         "label": "V2Box",                        "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": V2BOX_IOS_URL},
+        {"id": "btn_appstore_region",   "label": "🍏 Как изменить регион App Store", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "url", "action_value": APP_STORE_REGION_GUIDE_URL},
+        {"id": "btn_back_downloads",    "label": "⬅️ Назад",                     "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
+    ],
+    ensure_ascii=False,
+)
+
+DOWNLOAD_ANDROID_TEXT = (
+    "🤖 <b>Android</b>\n\n"
+    "Для Android подойдут Happ, v2rayNG или Hiddify.\n\n"
+    "После установки приложения скопируйте ключ в боте и импортируйте его в клиент."
+)
+
+DOWNLOAD_ANDROID_BUTTONS = json.dumps(
+    [
+        {"id": "btn_happ_android",       "label": "Happ",            "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HAPP_URL},
+        {"id": "btn_v2rayng_android",    "label": "v2rayNG",         "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": V2RAYNG_RELEASES_URL},
+        {"id": "btn_hiddify_android",    "label": "Hiddify",         "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HIDDIFY_URL},
+        {"id": "btn_back_downloads",     "label": "⬅️ Назад",        "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
+    ],
+    ensure_ascii=False,
+)
+
+DOWNLOAD_WINDOWS_TEXT = (
+    "💻 <b>Windows</b>\n\n"
+    "Для Windows рекомендуем Happ или Hiddify.\n\n"
+    "Скачивайте приложение только с официального сайта или страницы релизов проекта."
+)
+
+DOWNLOAD_WINDOWS_BUTTONS = json.dumps(
+    [
+        {"id": "btn_happ_windows",       "label": "Happ",             "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HAPP_URL},
+        {"id": "btn_hiddify_windows",    "label": "Hiddify Releases", "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": HIDDIFY_RELEASES_URL},
+        {"id": "btn_back_downloads",     "label": "⬅️ Назад",         "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
+    ],
+    ensure_ascii=False,
+)
+
+DOWNLOAD_MACOS_TEXT = (
+    "🖥 <b>macOS</b>\n\n"
+    "Для macOS рекомендуем Happ или Hiddify.\n\n"
+    "Скачивайте приложение только с официального сайта или страницы релизов проекта."
+)
+
+DOWNLOAD_MACOS_BUTTONS = json.dumps(
+    [
+        {"id": "btn_happ_macos",         "label": "Happ",             "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HAPP_URL},
+        {"id": "btn_hiddify_macos",      "label": "Hiddify Releases", "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": HIDDIFY_RELEASES_URL},
+        {"id": "btn_back_downloads",     "label": "⬅️ Назад",         "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
     ],
     ensure_ascii=False,
 )
@@ -114,6 +206,11 @@ TRIAL_TEXT = (
 PAGE_DEFAULTS = {
     "main": (MAIN_TEXT, MAIN_BUTTONS),
     "help": (HELP_TEXT, HELP_BUTTONS),
+    "download_clients": (DOWNLOAD_CLIENTS_TEXT, DOWNLOAD_CLIENTS_BUTTONS),
+    "download_ios": (DOWNLOAD_IOS_TEXT, DOWNLOAD_IOS_BUTTONS),
+    "download_android": (DOWNLOAD_ANDROID_TEXT, DOWNLOAD_ANDROID_BUTTONS),
+    "download_windows": (DOWNLOAD_WINDOWS_TEXT, DOWNLOAD_WINDOWS_BUTTONS),
+    "download_macos": (DOWNLOAD_MACOS_TEXT, DOWNLOAD_MACOS_BUTTONS),
     "documents": (DOCUMENTS_TEXT, DOCUMENTS_BUTTONS),
     "prepayment": (PREPAYMENT_TEXT, None),
     "trial": (TRIAL_TEXT, None),
