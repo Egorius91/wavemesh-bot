@@ -10,6 +10,7 @@ from database.db_keys import *
 from database.db_payments import *
 from database.db_servers import *
 from database.db_tariffs import *
+from database.db_subscriptions import *
 from database.db_stats import *
 from database.db_groups import *
 from database.db_settings import *
