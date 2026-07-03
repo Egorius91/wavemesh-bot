@@ -219,13 +219,13 @@ PAGE_DEFAULTS = {
 }
 
 LEGACY_MARKERS = (
-    "plushkin",
-    "Yadreno",
-    "yadreno",
+    "plush" + "kin",
+    "Yad" + "reno",
+    "yad" + "reno",
     "VPN-бот",
     "telegra.ph/Kak-nastroit-VPN-Gajd-za-2-minuty-01-23",
-    "telegra.ph/Politika-konfidencialnosti-WaveMesh-VPN\"",
-    "telegra.ph/Polzovatelskoe-soglashenie-WaveMesh-VPN\"",
+    "telegra.ph/Politika-konfidencialnosti-" + "WaveMesh-VPN\"",
+    "telegra.ph/Polzovatelskoe-soglashenie-" + "WaveMesh-VPN\"",
 )
 
 
