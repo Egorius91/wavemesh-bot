@@ -107,13 +107,18 @@ async def check_and_send_expiry_notifications(bot: Bot) -> None:
     """
     Checks and sends notifications about expiring VPN keys.
 
-    Fixes two important UX issues:
-    - missing key names are rendered as an empty string, never as None/null;
-    - 0 days are rendered as "сегодня" in new templates and cleaned up in old
-      custom templates like "через 0 дней".
+    Также запускает проверку подписок с наступившим next_charge_at. Эта функция
+    уже вызывается ежедневным планировщиком, поэтому автосписания работают без
+    отдельной задачи в main.py.
     """
     logger.info("⏳ Запуск проверки истекающих ключей...")
     try:
+        try:
+            from bot.services.subscription_billing import process_due_subscriptions
+            await process_due_subscriptions(bot)
+        except Exception as recurring_error:
+            logger.error("Ошибка автосписаний подписок: %s", recurring_error, exc_info=True)
+
         from bot.utils.message_editor import get_message_data
         from bot.utils.placeholders import apply_placeholder_replacements
         from bot.utils.text import escape_html, send_media_or_text
