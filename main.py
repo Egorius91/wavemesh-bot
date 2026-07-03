@@ -17,7 +17,13 @@ from database.migrations import run_migrations
 from bot.services.branding import apply_wavemesh_branding_defaults
 
 from bot.services.vpn_api import close_all_clients
-from bot.services.scheduler import run_daily_tasks, run_update_check_scheduler, run_traffic_sync_scheduler
+from bot.services import scheduler as scheduler_module
+from bot.services.expiry_notifications import check_and_send_expiry_notifications as clean_expiry_notifications
+
+scheduler_module.check_and_send_expiry_notifications = clean_expiry_notifications
+run_daily_tasks = scheduler_module.run_daily_tasks
+run_update_check_scheduler = scheduler_module.run_update_check_scheduler
+run_traffic_sync_scheduler = scheduler_module.run_traffic_sync_scheduler
 
 # Импорт роутеров
 from bot.handlers.user import router as user_router
