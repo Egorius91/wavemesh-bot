@@ -9,6 +9,12 @@ from aiogram.exceptions import TelegramForbiddenError
 from config import ADMIN_IDS
 from database.requests import get_or_create_user, is_user_banned, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
 from bot.utils.text import escape_html, safe_edit_or_send
+from bot.services.channel_gate import (
+    has_passed_channel_gate,
+    mark_channel_gate_passed,
+    render_channel_gate,
+    verify_channel_subscription,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -188,12 +194,43 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                 except Exception as notify_err:
                     logger.warning(f'Ошибка уведомления о новом реферале: {notify_err}')
 
+    if not has_passed_channel_gate(user_id):
+        await render_channel_gate(message, force_new=True)
+        return
+
     try:
         await _render_main_page(message, force_new=True)
     except TelegramForbiddenError:
         logger.warning(f'User {user_id} blocked the bot during /start')
     except Exception as e:
         logger.error(f'Error sending start message to {user_id}: {e}')
+
+
+@router.callback_query(F.data == 'channel_gate_check')
+async def callback_channel_gate_check(callback: CallbackQuery, state: FSMContext):
+    """Однократная проверка подписки на официальный информационный канал."""
+    user_id = callback.from_user.id
+    if is_user_banned(user_id):
+        await callback.answer('⛔ Доступ заблокирован', show_alert=True)
+        return
+
+    get_or_create_user(
+        user_id,
+        callback.from_user.username,
+        first_name=getattr(callback.from_user, 'first_name', None),
+        last_name=getattr(callback.from_user, 'last_name', None),
+    )
+
+    is_subscribed = await verify_channel_subscription(callback.bot, user_id)
+    if not is_subscribed:
+        await callback.answer('Подписка пока не найдена. Подпишитесь на канал и нажмите проверку ещё раз.', show_alert=True)
+        await render_channel_gate(callback)
+        return
+
+    mark_channel_gate_passed(user_id)
+    await state.clear()
+    await _render_main_page(callback)
+    await callback.answer('Готово! Доступ открыт.')
 
 
 @router.callback_query(F.data == 'start')
@@ -204,6 +241,11 @@ async def callback_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer('⛔ Доступ заблокирован', show_alert=True)
         return
     await state.clear()
+
+    if not has_passed_channel_gate(user_id):
+        await render_channel_gate(callback)
+        await callback.answer()
+        return
 
     await _render_main_page(callback)
     await callback.answer()
@@ -257,34 +299,4 @@ async def help_handler(callback: CallbackQuery):
 async def documents_handler(callback: CallbackQuery):
     """Показывает страницу документов."""
     await _render_documents_page(callback)
-    await callback.answer()
-
-
-@router.callback_query(F.data.in_({'download_clients', 'download_ios', 'download_android', 'download_windows', 'download_macos'}))
-async def download_pages_handler(callback: CallbackQuery):
-    """Показывает страницы загрузки VPN-клиентов."""
-    page_map = {
-        'download_clients': 'download_clients',
-        'download_ios': 'download_ios',
-        'download_android': 'download_android',
-        'download_windows': 'download_windows',
-        'download_macos': 'download_macos',
-    }
-    await _render_page(callback, page_map[callback.data])
-    await callback.answer()
-
-
-@router.callback_query(F.data == 'noop')
-async def noop_handler(callback: CallbackQuery):
-    """Заглушка: нажатие на заголовок группы ничего не делает."""
-    await callback.answer()
-
-
-@router.callback_query(F.data == 'dismiss_msg')
-async def dismiss_msg_handler(callback: CallbackQuery):
-    """Удаляет сообщение по кнопке OK."""
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
     await callback.answer()
