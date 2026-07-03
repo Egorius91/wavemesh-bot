@@ -69,13 +69,14 @@ class AdminStates(StatesGroup):
     tariff_view = State()            # Просмотр конкретного тарифа
     
     # ========== Добавление тарифа (пошаговый диалог) ==========
-    add_tariff_name = State()        # Шаг 1: Название
-    add_tariff_price_cents = State() # Шаг 2: Цена в центах
-    add_tariff_price_stars = State() # Шаг 3: Цена в звёздах
-    add_tariff_price_rub = State()   # Шаг 4: Цена в рублях (карты)
-    add_tariff_duration = State()    # Шаг 5: Длительность
-    add_tariff_traffic_limit = State() # Шаг 6: Лимит трафика (ГБ)
-    add_tariff_max_ips = State()     # Шаг 7: Лимит устройств (IP)
+    add_tariff_billing_type = State()  # Шаг 1: Тип тарифа
+    add_tariff_name = State()        # Шаг 2: Название
+    add_tariff_price_cents = State() # Шаг 3: Цена в центах
+    add_tariff_price_stars = State() # Шаг 4: Цена в звёздах
+    add_tariff_price_rub = State()   # Шаг 5: Цена в рублях (карты)
+    add_tariff_duration = State()    # Шаг 6: Длительность / период списания
+    add_tariff_traffic_limit = State() # Шаг 7: Лимит трафика (ГБ)
+    add_tariff_max_ips = State()     # Шаг 8: Лимит устройств (IP)
     add_tariff_confirm = State()     # Подтверждение
 
     # ========== Редактирование тарифа ==========
@@ -165,9 +166,19 @@ def get_total_params() -> int:
 
 TARIFF_PARAMS = [
     {
+        "key": "billing_type",
+        "label": "Тип тарифа",
+        "hint": "1 = разовая покупка, 2 = подписка с автосписанием",
+        "validate": lambda x: x.strip().lower() in {"1", "2", "one_time", "recurring", "разовый", "подписка"},
+        "error": "Введите 1 для разового тарифа или 2 для подписки",
+        "convert": lambda x: "recurring" if x.strip().lower() in {"2", "recurring", "подписка"} else "one_time",
+        "format": lambda x: "🔁 Подписка" if x == "recurring" else "🧾 Разовая покупка",
+        "help": "Для подписки бот сохранит способ оплаты ЮKassa при первом платеже и будет списывать оплату автоматически."
+    },
+    {
         "key": "name",
         "label": "Название",
-        "hint": "например: Месяц, Полгода, Год",
+        "hint": "например: Месяц, Полгода, Год, Подписка 30 дней",
         "validate": lambda x: 1 <= len(x) <= 50,
         "error": "Название от 1 до 50 символов"
     },
@@ -200,12 +211,12 @@ TARIFF_PARAMS = [
         "error": "Цена от 0 до 100000 рублей (целое число)",
         "convert": int,
         "format": lambda x: f"{x} ₽",
-        "help": "⚠️ *Важно:* Telegram не позволяет проводить платежи меньше $1. Минимальная цена в рублях должна быть не менее ~100 руб, иначе бот вернет ошибку. Чтобы скрыть тариф из раздела оплат картами - установите 0."
+        "help": "Для подписок через ЮKassa цена в рублях обязательна и должна быть больше 0."
     },
     {
         "key": "duration_days",
-        "label": "Длительность",
-        "hint": "в днях (1-99999)",
+        "label": "Длительность / период",
+        "hint": "в днях (1-99999). Для подписки это период автосписания",
         "validate": lambda x: x.isdigit() and 1 <= int(x) <= 99999,
         "error": "Длительность от 1 до 99999 дней",
         "convert": int,
