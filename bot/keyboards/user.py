@@ -476,7 +476,7 @@ def my_keys_list_kb(keys: list) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def key_manage_kb(key_id: int, is_unconfigured: bool = False, is_active: bool = True, is_traffic_exhausted: bool = False, has_sub_id: bool = False, include_navigation: bool = True) -> InlineKeyboardMarkup:
+def key_manage_kb(key_id: int, is_unconfigured: bool = False, is_active: bool = True, is_traffic_exhausted: bool = False, has_sub_id: bool = False, has_saved_payment_method: bool = False, include_navigation: bool = True) -> InlineKeyboardMarkup:
     """
     Клавиатура управления ключом.
 
@@ -530,6 +530,10 @@ def key_manage_kb(key_id: int, is_unconfigured: bool = False, is_active: bool = 
             InlineKeyboardButton(text="🔄 Заменить", callback_data=f"key_replace:{key_id}"),
             InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"key_rename:{key_id}")
         )
+        if has_saved_payment_method:
+            builder.row(
+                InlineKeyboardButton(text="💳 Отвязать карту", callback_data=f"key_unlink_card:{key_id}")
+            )
     
     if include_navigation:
         # ТРЕТИЙ ряд (унифицированный): Мои ключи и главная

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
-from bot.utils.datetime_format import format_date_for_display
+from bot.utils.datetime_format import format_date_for_display, format_datetime_for_display
 from bot.utils.text import escape_html
 
 
@@ -36,6 +36,7 @@ def build_key_details_replacements(
     traffic_info: str,
     inbound_name: str,
     protocol: str,
+    subscription: Mapping[str, Any] | None = None,
     prepend_html: str = '',
 ) -> dict[str, str]:
     """Готовит плейсхолдеры карточки ключа."""
@@ -54,6 +55,16 @@ def build_key_details_replacements(
         f"<b>Трафик:</b> {_safe(traffic_info)}",
         f"<b>Действует до:</b> {_safe(expires)}",
     ])
+    if subscription:
+        has_saved_payment_method = bool(subscription.get('payment_method_id'))
+        cancel_at_period_end = bool(subscription.get('cancel_at_period_end'))
+        sub_status = subscription.get('status')
+        if sub_status in ('active', 'payment_failed') and has_saved_payment_method and not cancel_at_period_end:
+            next_charge = format_datetime_for_display(subscription.get('next_charge_at'))
+            info_lines.extend([
+                f"<b>Автосписание:</b> активно",
+                f"<b>Ближайшее списание:</b> {_safe(next_charge)}",
+            ])
 
     return {
         KEY_INFO_PLACEHOLDER: '\n'.join(info_lines),
@@ -78,7 +89,7 @@ def build_key_history_block(payments: Iterable[Mapping[str, Any]]) -> str:
             amount_val = (payment.get('amount_cents') or 0) / 100
             amount_str = f'{amount_val:g}'.replace('.', ',')
             amount = f'${_safe(amount_str)}'
-        elif ptype in ('cards', 'yookassa_qr', 'wata', 'platega', 'cardlink', 'balance'):
+        elif ptype in ('cards', 'yookassa_qr', 'yookassa_recurring', 'wata', 'platega', 'cardlink', 'balance'):
             rub = payment.get('price_rub') or 0
             rub_str = f'{rub:g}'.replace('.', ',')
             amount = f'{_safe(rub_str)} ₽'

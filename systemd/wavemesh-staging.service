@@ -1,0 +1,19 @@
+[Unit]
+Description=WaveMesh Telegram Bot Staging
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wavemesh
+Group=wavemesh
+WorkingDirectory=/opt/wavemesh/staging
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/opt/wavemesh/staging/.env
+ExecStart=/opt/wavemesh/staging/.venv/bin/python /opt/wavemesh/staging/main.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

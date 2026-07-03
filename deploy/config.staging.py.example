@@ -1,0 +1,49 @@
+"""Staging config.py template.
+
+This file intentionally reads secrets from systemd EnvironmentFile (.env).
+Copy it to /opt/wavemesh/staging/config.py.
+"""
+
+import os
+
+
+def _required(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeError(f"{name} is required")
+    return value
+
+
+def _admin_ids() -> list[int]:
+    raw_ids = _required("ADMIN_IDS")
+    return [int(item.strip()) for item in raw_ids.split(",") if item.strip()]
+
+
+def _int_env(name: str, default: int) -> int:
+    value = os.environ.get(name, "")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+BOT_TOKEN = _required("BOT_TOKEN")
+ADMIN_IDS = _admin_ids()
+DATABASE_PATH = _required("DATABASE_PATH")
+GITHUB_REPO_URL = os.environ.get(
+    "GITHUB_REPO_URL",
+    "https://github.com/Egorius91/wavemesh-bot.git",
+)
+
+RETRY_CONFIG = {
+    "max_attempts": 3,
+    "delays": [1, 3, 9],
+    "timeout_seconds": 15,
+}
+
+SQLITE_JOURNAL_MODE = os.environ.get("SQLITE_JOURNAL_MODE", "WAL")
+SQLITE_SYNCHRONOUS = os.environ.get("SQLITE_SYNCHRONOUS", "NORMAL")
+SQLITE_BUSY_TIMEOUT_MS = _int_env("SQLITE_BUSY_TIMEOUT_MS", 10000)
+SQLITE_CACHE_SIZE_KB = _int_env("SQLITE_CACHE_SIZE_KB", 32768)
+SQLITE_TEMP_STORE = os.environ.get("SQLITE_TEMP_STORE", "MEMORY")
+SQLITE_MMAP_SIZE_BYTES = _int_env("SQLITE_MMAP_SIZE_BYTES", 134217728)

@@ -160,7 +160,7 @@ async def my_keys_handler(callback: CallbackQuery):
 
 async def show_key_details(telegram_id: int, key_id: int, message, is_callback: bool = True, prepend_text: str=''):
     """Общая логика для показа деталей ключа."""
-    from database.requests import get_key_details_for_user, get_key_payments_history, is_key_active, is_traffic_exhausted
+    from database.requests import get_key_details_for_user, get_key_payments_history, is_key_active, is_traffic_exhausted, get_active_subscription_by_key
     from bot.keyboards.user import key_manage_kb
     from bot.services.vpn_api import format_traffic
     from bot.utils.key_pages import build_key_details_replacements, keyboard_rows
@@ -213,6 +213,8 @@ async def show_key_details(telegram_id: int, key_id: int, message, is_callback: 
         except Exception as e:
             logger.warning(f'Ошибка получения протокола: {e}')
     payments = get_key_payments_history(key_id)
+    subscription = get_active_subscription_by_key(key_id)
+    has_saved_payment_method = bool(subscription and subscription.get('payment_method_id'))
     replacements = build_key_details_replacements(
         key,
         payments,
@@ -220,6 +222,7 @@ async def show_key_details(telegram_id: int, key_id: int, message, is_callback: 
         traffic_info=traffic_info,
         inbound_name=inbound_name,
         protocol=protocol,
+        subscription=subscription,
         prepend_html=prepend_text,
     )
     kb = key_manage_kb(
@@ -228,6 +231,7 @@ async def show_key_details(telegram_id: int, key_id: int, message, is_callback: 
         is_active=key_active,
         is_traffic_exhausted=traffic_exhausted,
         has_sub_id=bool(key.get('sub_id')),
+        has_saved_payment_method=has_saved_payment_method,
         include_navigation=False,
     )
     await render_page(
@@ -284,6 +288,33 @@ async def key_details_handler(callback: CallbackQuery):
     telegram_id = callback.from_user.id
     await show_key_details(telegram_id, key_id, callback.message)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith('key_unlink_card:'))
+async def key_unlink_card_handler(callback: CallbackQuery):
+    """Removes the saved recurring payment method for a user's subscription key."""
+    key_id = int(callback.data.split(':')[1])
+    telegram_id = callback.from_user.id
+    from database.requests import get_key_details_for_user, unlink_subscription_payment_method_by_key
+
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        await callback.answer('❌ Ключ не найден или вы не являетесь его владельцем.', show_alert=True)
+        return
+
+    success = unlink_subscription_payment_method_by_key(key_id, int(key['user_id']))
+    if not success:
+        await callback.answer('Карта уже отвязана или активная подписка не найдена.', show_alert=True)
+        await show_key_details(telegram_id, key_id, callback.message)
+        return
+
+    await callback.answer('✅ Карта отвязана. Автопродление отключено.', show_alert=True)
+    prepend = (
+        '✅ <b>Карта отвязана.</b>\n'
+        'Автопродление отключено, оплаченный доступ сохранён до конца текущего периода.'
+    )
+    await show_key_details(telegram_id, key_id, callback.message, prepend_text=prepend)
+
 
 @router.callback_query(F.data.startswith('key_show:'))
 async def key_show_handler(callback: CallbackQuery):

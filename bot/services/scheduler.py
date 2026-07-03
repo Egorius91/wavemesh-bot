@@ -28,6 +28,7 @@ from database.requests import (
     get_setting, get_expiring_keys, is_notification_sent_today, log_notification_sent,
     is_update_notifications_enabled, mark_user_bot_blocked
 )
+from database.connection import DB_PATH
 from database.db_backup import backup_bot_database_to
 from bot.services.vpn_api import (
     get_client_from_server_data,
@@ -44,7 +45,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 logger = logging.getLogger(__name__)
 
 # Путь к базе данных бота
-BOT_DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'database', 'wavemesh_bot.db')
+BOT_DB_PATH = str(DB_PATH)
 
 # Корневая папка проекта и папка для локальных бэкапов
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))

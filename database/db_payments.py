@@ -276,7 +276,7 @@ def get_user_payments_stats(user_id: int) -> Dict[str, Any]:
                 COUNT(*) as total_payments,
                 COALESCE(SUM(CASE WHEN payment_type = 'crypto' THEN amount_cents ELSE 0 END), 0) as total_amount_cents,
                 COALESCE(SUM(CASE WHEN payment_type = 'stars' THEN amount_stars ELSE 0 END), 0) as total_amount_stars,
-                COALESCE(SUM(CASE WHEN payment_type IN ('cards', 'yookassa_qr', 'wata', 'platega', 'cardlink', 'balance') THEN t.price_rub ELSE 0 END), 0) as total_amount_rub,
+                COALESCE(SUM(CASE WHEN payment_type IN ('cards', 'yookassa_qr', 'yookassa_recurring', 'wata', 'platega', 'cardlink', 'balance') THEN t.price_rub ELSE 0 END), 0) as total_amount_rub,
                 MAX(paid_at) as last_payment_at
             FROM payments p
             LEFT JOIN tariffs t ON p.tariff_id = t.id
@@ -357,6 +357,18 @@ def get_daily_payments_stats() -> Dict[str, Any]:
         """)
         qr_row = cursor.fetchone()
 
+        cursor = conn.execute("""
+            SELECT
+                COUNT(*) as count,
+                COALESCE(SUM(t.price_rub), 0) as total_rub
+            FROM payments p
+            LEFT JOIN tariffs t ON p.tariff_id = t.id
+            WHERE p.status = 'paid'
+            AND p.payment_type = 'yookassa_recurring'
+            AND p.paid_at >= datetime('now', '-1 day')
+        """)
+        yookassa_recurring_row = cursor.fetchone()
+
         # 5. Считаем WATA (Карта/СБП - Рубли)
         cursor = conn.execute("""
             SELECT
@@ -400,6 +412,7 @@ def get_daily_payments_stats() -> Dict[str, Any]:
                      (stars_row['count'] if stars_row else 0) + \
                      (cards_row['count'] if cards_row else 0) + \
                      (qr_row['count'] if qr_row else 0) + \
+                     (yookassa_recurring_row['count'] if yookassa_recurring_row else 0) + \
                      (wata_row['count'] if wata_row else 0) + \
                      (platega_row['count'] if platega_row else 0) + \
                      (cardlink_row['count'] if cardlink_row else 0)
@@ -407,6 +420,7 @@ def get_daily_payments_stats() -> Dict[str, Any]:
         total_stars = stars_row['total_stars'] if stars_row else 0
         total_rub = (cards_row['total_rub'] if cards_row else 0) + \
                     (qr_row['total_rub'] if qr_row else 0) + \
+                    (yookassa_recurring_row['total_rub'] if yookassa_recurring_row else 0) + \
                     (wata_row['total_rub'] if wata_row else 0) + \
                     (platega_row['total_rub'] if platega_row else 0) + \
                     (cardlink_row['total_rub'] if cardlink_row else 0)

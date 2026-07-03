@@ -16,6 +16,7 @@ __all__ = [
     'mark_subscription_payment_failed',
     'cancel_subscription_at_period_end',
     'deactivate_subscription',
+    'unlink_subscription_payment_method_by_key',
     'save_order_subscription_context',
     'get_subscription_for_order',
 ]
@@ -183,6 +184,45 @@ def cancel_subscription_at_period_end(subscription_id: int) -> bool:
             WHERE id = ?
         """, (subscription_id,))
         return cursor.rowcount > 0
+
+
+def unlink_subscription_payment_method_by_key(vpn_key_id: int, user_id: int) -> bool:
+    """Removes the saved recurring payment token for a user's key without touching paid access."""
+    ensure_subscription_schema()
+    with get_db() as conn:
+        sub = conn.execute("""
+            SELECT id
+            FROM subscriptions
+            WHERE vpn_key_id = ?
+              AND user_id = ?
+              AND status IN ('active', 'payment_failed')
+              AND payment_method_id IS NOT NULL
+              AND payment_method_id != ''
+            ORDER BY id DESC
+            LIMIT 1
+        """, (vpn_key_id, user_id)).fetchone()
+        if not sub:
+            return False
+
+        subscription_id = int(sub['id'])
+        conn.execute("""
+            UPDATE subscriptions
+            SET payment_method_id = NULL,
+                cancel_at_period_end = 1,
+                cancelled_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (subscription_id,))
+        conn.execute("""
+            UPDATE payments
+            SET payment_method_id = NULL
+            WHERE subscription_id = ?
+        """, (subscription_id,))
+        logger.info(
+            "Payment method unlinked for subscription %s, key %s",
+            subscription_id,
+            vpn_key_id,
+        )
+        return True
 
 
 def deactivate_subscription(subscription_id: int, status: str = 'cancelled') -> bool:

@@ -93,7 +93,7 @@ async def show_key_view(callback: CallbackQuery, state: FSMContext):
                 amount = f'${usd_str}'
             elif p['payment_type'] == 'stars':
                 amount = f"{p['amount_stars']} ⭐"
-            elif p.get('payment_type') in ('cards', 'yookassa_qr', 'wata', 'platega', 'cardlink', 'balance'):
+            elif p.get('payment_type') in ('cards', 'yookassa_qr', 'yookassa_recurring', 'wata', 'platega', 'cardlink', 'balance'):
                 rub = p.get('price_rub') or 0
                 rub_str = f'{rub:g}'.replace('.', ',')
                 amount = f'{rub_str} ₽'

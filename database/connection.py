@@ -4,6 +4,7 @@
 Предоставляет контекстный менеджер для безопасной работы с БД.
 """
 import sqlite3
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,8 @@ except ModuleNotFoundError as e:
     config = None
 
 # Путь к файлу базы данных
-DB_PATH = Path(__file__).parent / "wavemesh_bot.db"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DB_PATH = Path(__file__).resolve().parent / "wavemesh_bot.db"
 
 DEFAULT_SQLITE_JOURNAL_MODE = "WAL"
 DEFAULT_SQLITE_SYNCHRONOUS = "NORMAL"
@@ -34,6 +36,20 @@ def _config_value(name: str, default: Any) -> Any:
     if config is None:
         return default
     return getattr(config, name, default)
+
+
+def _resolve_database_path() -> Path:
+    raw_path = os.environ.get("DATABASE_PATH") or _config_value(
+        "DATABASE_PATH",
+        str(DEFAULT_DB_PATH),
+    )
+    db_path = Path(str(raw_path)).expanduser()
+    if not db_path.is_absolute():
+        db_path = PROJECT_ROOT / db_path
+    return db_path.resolve()
+
+
+DB_PATH = _resolve_database_path()
 
 
 def _int_config(name: str, default: int, *, min_value: int = 0) -> int:
@@ -107,6 +123,7 @@ def get_connection() -> sqlite3.Connection:
         sqlite3.Connection: Соединение с БД
     """
     timeout_seconds = get_sqlite_busy_timeout_ms() / 1000
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=timeout_seconds)
     conn.row_factory = sqlite3.Row  # Доступ к полям по имени
     _apply_connection_pragmas(conn)
