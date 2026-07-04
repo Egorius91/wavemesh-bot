@@ -220,7 +220,7 @@ async def _run_yookassa_check(message, state, order_id: str, telegram_id: int, c
     from database.requests import (
         find_order_by_order_id, get_user_internal_id, is_order_already_paid,
         update_payment_type, get_tariff_by_id, create_subscription,
-        save_order_subscription_context,
+        fail_order, save_order_subscription_context,
     )
     from bot.keyboards.admin import home_only_kb
     from bot.services.billing import complete_payment_flow
@@ -295,6 +295,7 @@ async def _run_yookassa_check(message, state, order_id: str, telegram_id: int, c
         return
 
     if status == 'canceled':
+        fail_order(order_id)
         await safe_edit_or_send(message, '❌ <b>Платёж отменён</b>\n\nПопробуйте снова выбрать тариф.', reply_markup=home_only_kb(), force_new=True)
         return
 

@@ -7,6 +7,7 @@ from aiogram import Bot
 
 from database.requests import (
     create_pending_order,
+    fail_order,
     get_due_subscriptions,
     mark_subscription_payment_succeeded,
     mark_subscription_payment_failed,
@@ -69,6 +70,7 @@ async def process_due_subscription(subscription: Dict[str, Any], bot: Bot) -> No
         )
     except Exception as e:
         logger.error('Подписка %s: ошибка создания автоплатежа: %s', sub_id, e, exc_info=True)
+        fail_order(order_id)
         mark_subscription_payment_failed(sub_id)
         await _notify_payment_failed(subscription, bot)
         return
@@ -98,10 +100,12 @@ async def process_due_subscription(subscription: Dict[str, Any], bot: Bot) -> No
             logger.info('Подписка %s успешно продлена, order=%s', sub_id, order_id)
         else:
             logger.error('Подписка %s: платёж прошёл, но order не обработался: %s', sub_id, text)
+            fail_order(order_id)
             mark_subscription_payment_failed(sub_id, payment_id=payment_id)
         return
 
     logger.warning('Подписка %s: автоплатёж создан, но статус=%s', sub_id, status)
+    fail_order(order_id)
     mark_subscription_payment_failed(sub_id, payment_id=payment_id)
     await _notify_payment_failed(subscription, bot)
 

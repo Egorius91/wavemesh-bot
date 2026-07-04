@@ -151,3 +151,7 @@ sqlite3 /opt/wavemesh/staging/database/wavemesh_bot_staging.db \
 ## Ready criteria
 
 Staging is ready when the test bot runs separately from production, the DB path is separate, YooKassa uses test credentials, recurring tariffs can be created, the first payment stores `payment_method_id`, recurring charge extends the VPN key, and the production bot remains untouched.
+
+## Known follow-ups
+
+- Decide the production billing anchor for recurring renewals: after a successful recurring charge, `next_charge_at` currently shifts from the actual charge time. Before production rollout, decide whether renewals should be scheduled from the successful charge timestamp or from the previous planned billing date.
