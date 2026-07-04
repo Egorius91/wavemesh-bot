@@ -126,6 +126,23 @@ async def process_due_subscriptions(bot: Bot, limit: int = 50) -> None:
         await asyncio.sleep(1)
 
 
+async def run_subscription_billing_scheduler(bot: Bot, interval_seconds: int = 60) -> None:
+    """Фоновый цикл автосписаний подписок."""
+    logger.info('Планировщик автосписаний подписок запущен (каждые %s сек.)', interval_seconds)
+
+    await asyncio.sleep(10)
+    while True:
+        try:
+            await process_due_subscriptions(bot)
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            logger.info('Планировщик автосписаний подписок остановлен')
+            break
+        except Exception as e:
+            logger.error('Ошибка в планировщике автосписаний подписок: %s', e, exc_info=True)
+            await asyncio.sleep(interval_seconds)
+
+
 async def _notify_payment_success(subscription: Dict[str, Any], bot: Bot) -> None:
     telegram_id = subscription.get('user_telegram_id')
     if not telegram_id:

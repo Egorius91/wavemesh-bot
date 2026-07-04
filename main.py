@@ -19,6 +19,7 @@ from bot.services.branding import apply_wavemesh_branding_defaults
 from bot.services.vpn_api import close_all_clients
 from bot.services import scheduler as scheduler_module
 from bot.services.expiry_notifications import check_and_send_expiry_notifications as clean_expiry_notifications
+from bot.services.subscription_billing import run_subscription_billing_scheduler
 
 scheduler_module.check_and_send_expiry_notifications = clean_expiry_notifications
 run_daily_tasks = scheduler_module.run_daily_tasks
@@ -156,7 +157,9 @@ async def main():
     update_tasks = asyncio.create_task(run_update_check_scheduler(bot))
     # Запускаем планировщик синхронизации трафика (каждые 5 мин)
     traffic_tasks = asyncio.create_task(run_traffic_sync_scheduler(bot))
-    background_tasks = [daily_tasks, update_tasks, traffic_tasks]
+    # Запускаем планировщик автосписаний подписок
+    subscription_billing_tasks = asyncio.create_task(run_subscription_billing_scheduler(bot))
+    background_tasks = [daily_tasks, update_tasks, traffic_tasks, subscription_billing_tasks]
     
     try:
         await dp.start_polling(bot)
