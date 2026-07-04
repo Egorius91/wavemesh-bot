@@ -28,7 +28,33 @@ Create a separate bot in BotFather, for example `WaveMesh Test` with a free user
 
 Use this token only for staging.
 
-## 3. Install staging
+## 3. One-command install on a new VPS
+
+Run this on the VPS as a sudo-capable user:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Egorius91/wavemesh-bot/feature/yookassa-recurring-subscriptions/scripts/install-staging.sh -o /tmp/wavemesh-install-staging.sh && sudo bash /tmp/wavemesh-install-staging.sh
+```
+
+The installer will ask for:
+
+- repository URL — press Enter to keep the default;
+- branch — press Enter to keep `feature/yookassa-recurring-subscriptions`;
+- staging Telegram `BOT_TOKEN`;
+- admin Telegram IDs, comma-separated.
+
+Optional overrides before running the command:
+
+```bash
+export APP_DIR=/opt/wavemesh/staging
+export APP_USER=wavemesh
+export SERVICE_NAME=wavemesh-staging.service
+export DATABASE_PATH=/opt/wavemesh/staging/database/wavemesh_bot_staging.db
+```
+
+Then run the install command above.
+
+## 4. Install staging from an already cloned repo
 
 From the cloned branch on the server:
 
@@ -44,7 +70,6 @@ Manual equivalent:
 sudo mkdir -p /opt/wavemesh
 sudo git clone --branch feature/yookassa-recurring-subscriptions https://github.com/Egorius91/wavemesh-bot.git /opt/wavemesh/staging
 cd /opt/wavemesh/staging
-sudo cp .env.staging.example .env
 sudo cp deploy/config.staging.py.example config.py
 sudo nano .env
 sudo python3 -m venv .venv
@@ -55,7 +80,7 @@ sudo systemctl enable wavemesh-staging
 sudo systemctl start wavemesh-staging
 ```
 
-## 4. Verify isolation
+## 5. Verify isolation
 
 ```bash
 sudo systemctl status wavemesh-staging
@@ -66,7 +91,7 @@ sudo ls -la /opt/wavemesh/staging/database/
 
 The staging DB path must be `/opt/wavemesh/staging/database/wavemesh_bot_staging.db`.
 
-## 5. Configure YooKassa in staging
+## 6. Configure YooKassa in staging
 
 In the staging bot admin panel/settings:
 
@@ -76,7 +101,7 @@ In the staging bot admin panel/settings:
 - do not use Telegram Provider Token for recurring subscriptions;
 - do not use the production YooKassa shop.
 
-## 6. Telegram smoke test
+## 7. Telegram smoke test
 
 In the staging bot:
 
@@ -87,7 +112,7 @@ In the staging bot:
 5. Make the first test payment through YooKassa API.
 6. Confirm that `payment_method_id` is saved.
 
-## 7. Database checks
+## 8. Database checks
 
 ```bash
 sqlite3 /opt/wavemesh/staging/database/wavemesh_bot_staging.db \
