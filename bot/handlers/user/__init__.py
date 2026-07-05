@@ -1,7 +1,6 @@
 from aiogram import Router
 
 from .start import router as start_router
-from .keys_extra import router as keys_extra_router
 from .keys import router as keys_router
 from .trial import router as trial_router
 from .tariffs import router as tariffs_router
@@ -19,7 +18,6 @@ router.callback_query.outer_middleware(ResetAdminPageContextMiddleware())
 router.include_router(payments_router)
 router.include_router(referral_router)
 router.include_router(start_router)
-router.include_router(keys_extra_router)
 router.include_router(keys_router)
 router.include_router(trial_router)
 router.include_router(tariffs_router)
