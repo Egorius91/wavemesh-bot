@@ -275,6 +275,11 @@ def get_tariff_param_by_index(index: int) -> dict:
     return TARIFF_PARAMS[0]
 
 
-def get_tariff_total_params() -> int:
+def get_tariff_params_list() -> list:
+    """Возвращает список параметров тарифа для админского редактора."""
+    return TARIFF_PARAMS
+
+
+def get_total_tariff_params() -> int:
     """Возвращает общее количество параметров тарифа."""
     return len(TARIFF_PARAMS)
