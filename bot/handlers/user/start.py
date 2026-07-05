@@ -300,3 +300,17 @@ async def documents_handler(callback: CallbackQuery):
     """Показывает страницу документов."""
     await _render_documents_page(callback)
     await callback.answer()
+
+
+@router.callback_query(F.data.in_({'download_clients', 'download_ios', 'download_android', 'download_windows', 'download_macos'}))
+async def download_pages_handler(callback: CallbackQuery):
+    """Показывает страницы загрузки VPN-клиентов."""
+    page_map = {
+        'download_clients': 'download_clients',
+        'download_ios': 'download_ios',
+        'download_android': 'download_android',
+        'download_windows': 'download_windows',
+        'download_macos': 'download_macos',
+    }
+    await _render_page(callback, page_map[callback.data])
+    await callback.answer()
