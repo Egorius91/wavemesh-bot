@@ -106,7 +106,9 @@ class AdminStates(StatesGroup):
     
     # ========== Управление группами тарифов ==========
     group_add_name = State()         # Ввод названия новой группы
+    group_add_position = State()     # Ввод позиции новой группы
     group_edit_name = State()        # Ввод нового названия группы
+    group_edit_position = State()    # Ввод новой позиции группы
     tariff_select_group = State()    # Выбор группы при добавлении тарифа
     server_select_group = State()    # Выбор группы при добавлении сервера
 
@@ -218,79 +220,27 @@ TARIFF_PARAMS = [
         "validate": lambda x: x.isdigit() and 0 <= int(x) <= 99999,
         "error": "Введите число от 0 до 99999 (0 = безлимит)",
         "convert": int,
-        "format": lambda x: f"{x} ГБ" if x > 0 else "Безлимит"
+        "format": lambda x: "Безлимит" if x == 0 else f"{x} ГБ"
     },
     {
         "key": "max_ips",
-        "label": "Лимит устройств (IP)",
-        "hint": "Минимум 1 (ограничение по IP адресам)",
-        "validate": lambda x: x.isdigit() and 1 <= int(x) <= 999,
-        "error": "Введите число от 1 до 999",
+        "label": "Лимит устройств",
+        "hint": "0 = безлимит, иначе число устройств/IP",
+        "validate": lambda x: x.isdigit() and 0 <= int(x) <= 99999,
+        "error": "Введите число от 0 до 99999 (0 = безлимит)",
         "convert": int,
-        "format": lambda x: f"{x} устр."
-    },
-    {
-        "key": "display_order",
-        "label": "Порядок отображения",
-        "hint": "меньше = выше в списке (0-99)",
-        "validate": lambda x: x.isdigit() and 0 <= int(x) <= 99,
-        "error": "Порядок от 0 до 99",
-        "convert": int
+        "format": lambda x: "Безлимит" if x == 0 else f"{x} устройств"
     },
 ]
 
 
 def get_tariff_param_by_index(index: int) -> dict:
-    """
-    Получает параметр тарифа по индексу.
-    
-    Args:
-        index: Индекс параметра
-    """
+    """Получает параметр тарифа по индексу."""
     if 0 <= index < len(TARIFF_PARAMS):
         return TARIFF_PARAMS[index]
     return TARIFF_PARAMS[0]
 
 
-def get_tariff_params_list() -> list:
-    """Возвращает список параметров тарифа."""
-    return TARIFF_PARAMS
-
-
-def get_total_tariff_params() -> int:
+def get_tariff_total_params() -> int:
     """Возвращает общее количество параметров тарифа."""
     return len(TARIFF_PARAMS)
-
-
-# ============================================================================
-# ПАРАМЕТРЫ КРИПТО-ПЛАТЕЖЕЙ
-# ============================================================================
-
-CRYPTO_PARAMS = [
-    {
-        "key": "crypto_item_url",
-        "label": "Ссылка на товар",
-        "hint": "ссылка на товар/инвойс в платёжном сервисе",
-        "validate": lambda x: len(x.strip()) >= 5,
-        "error": "Введите корректную ссылку",
-    },
-    {
-        "key": "crypto_secret_key",
-        "label": "Секретный ключ",
-        "hint": "секретный ключ для проверки платежей",
-        "validate": lambda x: len(x.strip()) >= 1,
-        "error": "Введите секретный ключ",
-    },
-]
-
-
-def get_crypto_param_by_index(index: int) -> dict:
-    """Получает параметр крипто-платежей по индексу."""
-    if 0 <= index < len(CRYPTO_PARAMS):
-        return CRYPTO_PARAMS[index]
-    return CRYPTO_PARAMS[0]
-
-
-def get_total_crypto_params() -> int:
-    """Возвращает общее количество параметров крипто-платежей."""
-    return len(CRYPTO_PARAMS)
