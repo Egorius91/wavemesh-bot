@@ -21,46 +21,83 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def _tariff_group_title(name: str) -> str:
+    """Возвращает пользовательский заголовок группы тарифов."""
+    normalized = (name or '').strip().lower()
+    if normalized == 'подписки':
+        return '🔁 <b>Подписки</b>'
+    if normalized == 'разовые':
+        return '⚡ <b>Разовые</b>'
+    return f"📂 <b>{escape_html(name or 'Другие')}</b>"
+
+
+def _format_tariff_line(tariff: dict, enabled_payment_labels: list[str]) -> str:
+    """Форматирует одну строку тарифа для главной страницы."""
+    prices = []
+
+    if 'crypto' in enabled_payment_labels:
+        price_usd = tariff['price_cents'] / 100
+        price_str = f'{price_usd:g}'.replace('.', ',')
+        prices.append(f'${escape_html(price_str)}')
+
+    if 'stars' in enabled_payment_labels:
+        prices.append(f"{tariff['price_stars']} ⭐")
+
+    if 'rub' in enabled_payment_labels and tariff.get('price_rub', 0) > 0:
+        prices.append(f"{int(tariff['price_rub'])} ₽")
+
+    price_display = ' / '.join(prices) if prices else 'Цена не установлена'
+    return f"• {escape_html(tariff['name'])} — {price_display}"
+
+
 def _build_tariff_text() -> str:
-    """Формирует блок тарифов для плейсхолдера %тарифы%.
-    
-    Returns:
-        HTML-текст со списком тарифов и ценами, или пустая строка если нет тарифов
-    """
+    """Формирует сгруппированный блок тарифов для плейсхолдера %тарифы%."""
     from database.requests import (
-        get_all_tariffs, is_crypto_configured, is_stars_enabled,
+        get_all_tariffs, get_all_groups, get_tariffs_by_group,
+        is_crypto_configured, is_stars_enabled,
         is_cards_enabled, is_yookassa_qr_configured, is_demo_payment_enabled,
         is_wata_configured, is_platega_configured, is_cardlink_configured,
     )
 
-    crypto_enabled = is_crypto_configured()
-    stars_enabled = is_stars_enabled()
-    cards_enabled = is_cards_enabled()
-    yookassa_qr_enabled = is_yookassa_qr_configured()
-    wata_enabled = is_wata_configured()
-    platega_enabled = is_platega_configured()
-    cardlink_enabled = is_cardlink_configured()
-    demo_enabled = is_demo_payment_enabled()
+    enabled_payment_labels = []
+    if is_crypto_configured():
+        enabled_payment_labels.append('crypto')
+    if is_stars_enabled():
+        enabled_payment_labels.append('stars')
+    if (
+        is_cards_enabled() or is_yookassa_qr_configured() or is_wata_configured()
+        or is_platega_configured() or is_cardlink_configured() or is_demo_payment_enabled()
+    ):
+        enabled_payment_labels.append('rub')
 
-    tariffs = get_all_tariffs()
-    if not tariffs:
+    all_tariffs = get_all_tariffs()
+    if not all_tariffs:
         return ''
 
     lines = ['📋 <b>Тарифы:</b>']
-    for tariff in tariffs:
-        prices = []
-        if crypto_enabled:
-            price_usd = tariff['price_cents'] / 100
-            price_str = f'{price_usd:g}'.replace('.', ',')
-            prices.append(f'${escape_html(price_str)}')
-        if stars_enabled:
-            prices.append(f"{tariff['price_stars']} ⭐")
-        if (cards_enabled or yookassa_qr_enabled or wata_enabled
-                or platega_enabled or cardlink_enabled or demo_enabled
-            ) and tariff.get('price_rub', 0) > 0:
-            prices.append(f"{int(tariff['price_rub'])} ₽")
-        price_display = ' / '.join(prices) if prices else 'Цена не установлена'
-        lines.append(f"• {escape_html(tariff['name'])} — {price_display}")
+    rendered_any_group = False
+    rendered_tariff_ids = set()
+
+    for group in get_all_groups():
+        group_tariffs = get_tariffs_by_group(group['id'])
+        if not group_tariffs:
+            continue
+
+        rendered_any_group = True
+        lines.append('')
+        lines.append(_tariff_group_title(group.get('name')))
+        for tariff in group_tariffs:
+            rendered_tariff_ids.add(tariff['id'])
+            lines.append(_format_tariff_line(tariff, enabled_payment_labels))
+
+    # Защита для тарифов без корректной группы: не теряем их.
+    orphan_tariffs = [t for t in all_tariffs if t['id'] not in rendered_tariff_ids]
+    if orphan_tariffs:
+        if rendered_any_group:
+            lines.append('')
+            lines.append('📂 <b>Другие</b>')
+        for tariff in orphan_tariffs:
+            lines.append(_format_tariff_line(tariff, enabled_payment_labels))
 
     return '\n'.join(lines)
 
