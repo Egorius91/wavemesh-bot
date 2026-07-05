@@ -7,6 +7,7 @@ from aiogram import Bot
 
 from database.requests import (
     create_pending_order,
+    fail_order,
     get_due_subscriptions,
     mark_subscription_payment_succeeded,
     mark_subscription_payment_failed,
@@ -27,9 +28,12 @@ def _payment_method_from_payment(payment: Dict[str, Any]) -> str:
     return ''
 
 
-def _log_order_not_completed(order_id: str) -> None:
-    """Логирует неуспешный recurring-order без зависимости от отсутствующего fail_order."""
-    logger.warning('Recurring order %s не был завершён успешно; подписка будет отмечена как payment_failed', order_id)
+def _fail_recurring_order(order_id: str) -> None:
+    """Помечает неуспешный recurring-order как failed и пишет диагностический лог."""
+    if fail_order(order_id):
+        logger.info('Recurring order %s помечен как failed', order_id)
+    else:
+        logger.warning('Recurring order %s не был завершён успешно; статус order не изменён', order_id)
 
 
 async def process_due_subscription(subscription: Dict[str, Any], bot: Bot) -> None:
@@ -74,7 +78,7 @@ async def process_due_subscription(subscription: Dict[str, Any], bot: Bot) -> No
         )
     except Exception as e:
         logger.error('Подписка %s: ошибка создания автоплатежа: %s', sub_id, e, exc_info=True)
-        _log_order_not_completed(order_id)
+        _fail_recurring_order(order_id)
         mark_subscription_payment_failed(sub_id)
         await _notify_payment_failed(subscription, bot)
         return
@@ -104,12 +108,12 @@ async def process_due_subscription(subscription: Dict[str, Any], bot: Bot) -> No
             logger.info('Подписка %s успешно продлена, order=%s', sub_id, order_id)
         else:
             logger.error('Подписка %s: платёж прошёл, но order не обработался: %s', sub_id, text)
-            _log_order_not_completed(order_id)
+            _fail_recurring_order(order_id)
             mark_subscription_payment_failed(sub_id, payment_id=payment_id)
         return
 
     logger.warning('Подписка %s: автоплатёж создан, но статус=%s', sub_id, status)
-    _log_order_not_completed(order_id)
+    _fail_recurring_order(order_id)
     mark_subscription_payment_failed(sub_id, payment_id=payment_id)
     await _notify_payment_failed(subscription, bot)
 
