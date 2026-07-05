@@ -13,6 +13,7 @@ __all__ = [
     'get_group_by_id',
     'add_group',
     'update_group_name',
+    'update_group_sort_order',
     'delete_group',
     'move_group_up',
     'get_groups_count',
@@ -22,6 +23,17 @@ __all__ = [
     'toggle_server_group',
     'get_tariff_group_id',
 ]
+
+
+def _normalize_sort_order(sort_order: Optional[int]) -> Optional[int]:
+    if sort_order is None:
+        return None
+    try:
+        value = int(sort_order)
+    except (TypeError, ValueError):
+        return None
+    return max(1, min(value, 9999))
+
 
 def get_all_groups() -> List[Dict[str, Any]]:
     """
@@ -37,6 +49,7 @@ def get_all_groups() -> List[Dict[str, Any]]:
             ORDER BY sort_order, id
         """)
         return [dict(row) for row in cursor.fetchall()]
+
 
 def get_group_by_id(group_id: int) -> Optional[Dict[str, Any]]:
     """
@@ -57,30 +70,37 @@ def get_group_by_id(group_id: int) -> Optional[Dict[str, Any]]:
         row = cursor.fetchone()
         return dict(row) if row else None
 
-def add_group(name: str) -> int:
+
+def add_group(name: str, sort_order: Optional[int] = None) -> int:
     """
     Добавляет новую группу тарифов.
-    sort_order = максимальный существующий + 1 (но не больше 99).
+
+    Если sort_order не передан, новая группа добавляется в конец.
+    Если передан — используется указанная позиция, по которой группы сортируются
+    на главной и в меню выбора тарифов.
     
     Args:
         name: Название группы
+        sort_order: Позиция группы в списке
         
     Returns:
         ID созданной группы
     """
     with get_db() as conn:
-        # Определяем следующий sort_order
-        cursor = conn.execute("SELECT MAX(sort_order) FROM tariff_groups")
-        max_order = cursor.fetchone()[0] or 0
-        new_order = min(max_order + 1, 99)
-        
+        normalized_order = _normalize_sort_order(sort_order)
+        if normalized_order is None:
+            cursor = conn.execute("SELECT MAX(sort_order) FROM tariff_groups")
+            max_order = cursor.fetchone()[0] or 0
+            normalized_order = min(max_order + 1, 9999)
+
         cursor = conn.execute("""
             INSERT INTO tariff_groups (name, sort_order)
             VALUES (?, ?)
-        """, (name, new_order))
+        """, (name, normalized_order))
         group_id = cursor.lastrowid
-        logger.info(f"Добавлена группа тарифов: {name} (ID: {group_id}, sort_order: {new_order})")
+        logger.info(f"Добавлена группа тарифов: {name} (ID: {group_id}, sort_order: {normalized_order})")
         return group_id
+
 
 def update_group_name(group_id: int, name: str) -> bool:
     """
@@ -103,6 +123,36 @@ def update_group_name(group_id: int, name: str) -> bool:
         if success:
             logger.info(f"Группа ID {group_id} переименована в '{name}'")
         return success
+
+
+def update_group_sort_order(group_id: int, sort_order: int) -> bool:
+    """
+    Обновляет позицию группы тарифов.
+
+    Эта позиция влияет на порядок отображения групп на главной и в меню покупки.
+    
+    Args:
+        group_id: ID группы
+        sort_order: Новая позиция
+        
+    Returns:
+        True если обновление успешно
+    """
+    normalized_order = _normalize_sort_order(sort_order)
+    if normalized_order is None:
+        return False
+
+    with get_db() as conn:
+        cursor = conn.execute("""
+            UPDATE tariff_groups
+            SET sort_order = ?
+            WHERE id = ?
+        """, (normalized_order, group_id))
+        success = cursor.rowcount > 0
+        if success:
+            logger.info(f"Группа ID {group_id}: sort_order изменён на {normalized_order}")
+        return success
+
 
 def delete_group(group_id: int) -> bool:
     """
@@ -132,6 +182,7 @@ def delete_group(group_id: int) -> bool:
         if success:
             logger.info(f"Удалена группа ID {group_id}, тарифы/серверы перенесены в «Основная»")
         return success
+
 
 def move_group_up(group_id: int) -> bool:
     """
@@ -177,6 +228,7 @@ def move_group_up(group_id: int) -> bool:
         
         return True
 
+
 def get_groups_count() -> int:
     """
     Возвращает количество групп тарифов.
@@ -187,6 +239,7 @@ def get_groups_count() -> int:
     with get_db() as conn:
         cursor = conn.execute("SELECT COUNT(*) FROM tariff_groups")
         return cursor.fetchone()[0]
+
 
 def get_tariffs_by_group(group_id: int) -> List[Dict[str, Any]]:
     """
@@ -208,6 +261,7 @@ def get_tariffs_by_group(group_id: int) -> List[Dict[str, Any]]:
         """, (group_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+
 def get_active_servers_by_group(group_id: int) -> List[Dict[str, Any]]:
     """
     Получает активные серверы указанной группы (many-to-many через server_groups).
@@ -224,6 +278,7 @@ def get_active_servers_by_group(group_id: int) -> List[Dict[str, Any]]:
         """, (group_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+
 def get_server_group_ids(server_id: int) -> List[int]:
     """
     Возвращает список ID групп, в которые входит сервер.
@@ -234,6 +289,7 @@ def get_server_group_ids(server_id: int) -> List[int]:
             (server_id,)
         )
         return [row[0] for row in cursor.fetchall()]
+
 
 def toggle_server_group(server_id: int, group_id: int) -> bool:
     """
@@ -258,32 +314,24 @@ def toggle_server_group(server_id: int, group_id: int) -> bool:
             )
             if cursor.fetchone()[0] <= 1:
                 logger.warning(f"Сервер ID {server_id}: нельзя удалить последнюю группу {group_id}")
-                return True  # Остаётся в группе
+                return True
+
             conn.execute(
                 "DELETE FROM server_groups WHERE server_id = ? AND group_id = ?",
                 (server_id, group_id)
             )
-            logger.info(f"Сервер ID {server_id} удалён из группы {group_id}")
             return False
-        else:
-            conn.execute(
-                "INSERT INTO server_groups (server_id, group_id) VALUES (?, ?)",
-                (server_id, group_id)
-            )
-            logger.info(f"Сервер ID {server_id} добавлен в группу {group_id}")
-            return True
 
-def get_tariff_group_id(tariff_id: int) -> int:
-    """
-    Получает group_id тарифа.
-    
-    Args:
-        tariff_id: ID тарифа
-        
-    Returns:
-        ID группы тарифа (1 по умолчанию если не найден)
-    """
+        conn.execute(
+            "INSERT OR IGNORE INTO server_groups (server_id, group_id) VALUES (?, ?)",
+            (server_id, group_id)
+        )
+        return True
+
+
+def get_tariff_group_id(tariff_id: int) -> Optional[int]:
+    """Возвращает group_id тарифа."""
     with get_db() as conn:
         cursor = conn.execute("SELECT group_id FROM tariffs WHERE id = ?", (tariff_id,))
         row = cursor.fetchone()
-        return row['group_id'] if row else 1
+        return row[0] if row else None
