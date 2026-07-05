@@ -453,7 +453,7 @@ async def _finalize_recurring_yookassa_payment(message, state, order_id: str, te
 
 async def _run_yookassa_recurring_check(message, state, order_id: str, telegram_id: int, callback=None) -> None:
     """Проверяет первый платёж подписки ЮKassa."""
-    from database.requests import find_order_by_order_id
+    from database.requests import fail_order, find_order_by_order_id
     from bot.services.yookassa_recurring import get_yookassa_payment
     from bot.keyboards.admin import home_only_kb
 
@@ -485,6 +485,7 @@ async def _run_yookassa_recurring_check(message, state, order_id: str, telegram_
     if status == 'succeeded':
         await _finalize_recurring_yookassa_payment(message, state, order_id, telegram_id, payment, callback=callback)
     elif status == 'canceled':
+        fail_order(order_id)
         await safe_edit_or_send(
             message,
             '❌ <b>Платёж отменён</b>\n\nПохоже, платёж был отменён.\nПопробуйте снова выбрать тариф.',
