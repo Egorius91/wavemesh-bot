@@ -5,6 +5,7 @@
 Прямой SQL в хендлерах запрещён — используйте функции из этого модуля.
 """
 
+from database.connection import get_db
 from database.db_users import *
 from database.db_keys import *
 from database.db_payments import *
@@ -16,3 +17,17 @@ from database.db_settings import *
 from database.db_pages import *
 from database.db_backup import *
 from database.db_subscriptions import *
+
+
+def fail_order(order_id: str) -> bool:
+    """Помечает pending order как failed без изменения уже оплаченных заказов."""
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE payments
+            SET status = 'failed'
+            WHERE order_id = ? AND status = 'pending'
+            """,
+            (order_id,),
+        )
+        return cursor.rowcount > 0
