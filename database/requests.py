@@ -15,3 +15,4 @@ from database.db_groups import *
 from database.db_settings import *
 from database.db_pages import *
 from database.db_backup import *
+from database.db_subscriptions import *
