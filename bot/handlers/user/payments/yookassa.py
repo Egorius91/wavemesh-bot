@@ -377,25 +377,140 @@ async def check_yookassa_payment(callback: CallbackQuery, state: FSMContext):
     )
 
 
+async def _finalize_recurring_yookassa_payment(message, state, order_id: str, telegram_id: int, payment: dict, callback=None) -> None:
+    """Завершает первый платёж подписки и создаёт запись subscriptions."""
+    from database.requests import (
+        find_order_by_order_id, get_user_internal_id, is_order_already_paid,
+        get_tariff_by_id, create_subscription, save_order_subscription_context,
+        get_active_subscription_by_key,
+    )
+    from bot.services.billing import complete_payment_flow
+    from bot.keyboards.admin import home_only_kb
+
+    order = find_order_by_order_id(order_id)
+    if not order:
+        if callback:
+            await callback.answer('❌ Ордер не найден', show_alert=True)
+        else:
+            await safe_edit_or_send(message, '❌ Ордер не найден', reply_markup=home_only_kb())
+        return
+
+    owner_user_id = get_user_internal_id(telegram_id)
+    if not owner_user_id or int(order.get('user_id') or 0) != int(owner_user_id):
+        logger.warning('Попытка проверить чужой подписочный платёж: order=%s, telegram_id=%s', order_id, telegram_id)
+        if callback:
+            await callback.answer('❌ Ордер не найден', show_alert=True)
+        return
+
+    if order.get('status') == 'paid' or is_order_already_paid(order_id):
+        await safe_edit_or_send(message, '✅ Оплата уже была обработана ранее.', reply_markup=home_only_kb(), force_new=True)
+        return
+
+    method = payment.get('payment_method') or {}
+    method_id = method.get('id') if isinstance(method, dict) else None
+    if not method_id:
+        await safe_edit_or_send(
+            message,
+            '⚠️ Оплата прошла, но ЮKassa не вернула сохранённый способ оплаты. Подписка не была активирована автоматически. Напишите в поддержку.',
+            reply_markup=home_only_kb(),
+            force_new=True,
+        )
+        return
+
+    save_order_subscription_context(order_id, payment_method_id=method_id, is_recurring=1)
+    tariff = get_tariff_by_id(order.get('tariff_id'))
+    referral_amount = await _yookassa_referral_amount(order, state)
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    await complete_payment_flow(
+        order_id=order_id,
+        message=message,
+        state=state,
+        telegram_id=telegram_id,
+        payment_type=_YK_TYPE,
+        referral_amount=referral_amount,
+    )
+
+    updated_order = find_order_by_order_id(order_id)
+    vpn_key_id = updated_order.get('vpn_key_id') if updated_order else None
+    if tariff and vpn_key_id and not get_active_subscription_by_key(vpn_key_id):
+        subscription_id = create_subscription(
+            user_id=owner_user_id,
+            tariff_id=tariff['id'],
+            vpn_key_id=vpn_key_id,
+            payment_method_id=method_id,
+            billing_period_days=tariff.get('billing_period_days') or tariff.get('duration_days') or 30,
+            initial_payment_id=payment.get('id'),
+            provider='yookassa',
+        )
+        save_order_subscription_context(order_id, subscription_id=subscription_id, payment_method_id=method_id, is_recurring=1)
+        logger.info('Создана подписка %s после первого платежа order=%s', subscription_id, order_id)
+
+
+async def _run_yookassa_recurring_check(message, state, order_id: str, telegram_id: int, callback=None) -> None:
+    """Проверяет первый платёж подписки ЮKassa."""
+    from database.requests import find_order_by_order_id
+    from bot.services.yookassa_recurring import get_yookassa_payment
+    from bot.keyboards.admin import home_only_kb
+
+    order = find_order_by_order_id(order_id)
+    if not order:
+        if callback:
+            await callback.answer('❌ Ордер не найден', show_alert=True)
+        else:
+            await safe_edit_or_send(message, '❌ Ордер не найден', reply_markup=home_only_kb())
+        return
+
+    payment_id = order.get(_YK_RESULT_KEY)
+    if not payment_id:
+        if callback:
+            await callback.answer('⚠️ Нет данных о платеже. Попробуйте чуть позже.', show_alert=True)
+        return
+
+    if callback:
+        await callback.answer('🔍 Проверяем платёж...')
+
+    try:
+        payment = await get_yookassa_payment(payment_id)
+    except Exception as e:
+        logger.error('Ошибка проверки первого платежа подписки ЮKassa %s: %s', order_id, e)
+        await safe_edit_or_send(message, '❌ Не удалось проверить статус платежа. Попробуйте позже.', reply_markup=home_only_kb(), force_new=True)
+        return
+
+    status = payment.get('status', 'pending')
+    if status == 'succeeded':
+        await _finalize_recurring_yookassa_payment(message, state, order_id, telegram_id, payment, callback=callback)
+    elif status == 'canceled':
+        await safe_edit_or_send(
+            message,
+            '❌ <b>Платёж отменён</b>\n\nПохоже, платёж был отменён.\nПопробуйте снова выбрать тариф.',
+            reply_markup=home_only_kb(),
+            force_new=True,
+        )
+    else:
+        await safe_edit_or_send(
+            message,
+            '⏳ <b>Платёж ещё не поступил</b>\n\nОплатите по ссылке и нажмите «✅ Я оплатил» снова.\n\n<i>Если только что оплатили — подождите пару секунд.</i>',
+            force_new=True,
+        )
+
+
 async def _run_yookassa_check(message, state, order_id: str,
                               telegram_id: int, callback=None) -> None:
     """
     Общая проверка ЮКасса QR-платежа для кнопки «Я оплатил» и deep-link возврата.
     """
-    from database.requests import find_order_by_order_id, save_order_subscription_context
+    from database.requests import find_order_by_order_id
     from bot.services.billing import check_yookassa_payment_status
-    from bot.services.yookassa_recurring import get_yookassa_payment
 
-    async def _check_and_capture_payment_method(payment_id: str) -> str:
-        order = find_order_by_order_id(order_id)
-        if order and int(order.get('is_recurring') or 0) == 1:
-            payment = await get_yookassa_payment(payment_id)
-            method = payment.get('payment_method') or {}
-            method_id = method.get('id') if isinstance(method, dict) else None
-            if method_id:
-                save_order_subscription_context(order_id, payment_method_id=method_id, is_recurring=1)
-            return payment.get('status', 'pending')
-        return await check_yookassa_payment_status(payment_id)
+    order = find_order_by_order_id(order_id)
+    if order and int(order.get('is_recurring') or 0) == 1:
+        await _run_yookassa_recurring_check(message, state, order_id, telegram_id, callback=callback)
+        return
 
     await check_qr_payment_flow(
         message=message,
@@ -404,7 +519,7 @@ async def _run_yookassa_check(message, state, order_id: str,
         telegram_id=telegram_id,
         payment_type=_YK_TYPE,
         payment_id_field=_YK_RESULT_KEY,
-        check_func=_check_and_capture_payment_method,
+        check_func=check_yookassa_payment_status,
         pending_hint='Если только что оплатили — подождите пару секунд.',
         callback=callback,
         referral_override_func=_yookassa_referral_amount,
