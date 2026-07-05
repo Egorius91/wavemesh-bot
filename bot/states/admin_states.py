@@ -162,6 +162,40 @@ def get_total_params() -> int:
 
 
 # ============================================================================
+# ПАРАМЕТРЫ КРИПТО-ПЛАТЕЖЕЙ
+# ============================================================================
+
+CRYPTO_PARAMS = [
+    {
+        "key": "crypto_item_url",
+        "label": "Ссылка на позицию Ya.Seller",
+        "hint": "ссылка из @Ya_SellerBot, например: https://t.me/Ya_SellerBot?start=item-...",
+        "validate": lambda x: isinstance(x, str) and x.strip().startswith("https://t.me/") and ("Ya_SellerBot" in x or "start=item" in x),
+        "error": "Введите корректную ссылку на позицию из @Ya_SellerBot"
+    },
+    {
+        "key": "crypto_secret_key",
+        "label": "Секретный ключ",
+        "hint": "ключ подписи из @Ya_SellerBot",
+        "validate": lambda x: isinstance(x, str) and len(x.strip()) >= 8,
+        "error": "Секретный ключ должен быть не короче 8 символов"
+    },
+]
+
+
+def get_crypto_param_by_index(index: int) -> dict:
+    """Получает параметр крипто-настроек по индексу."""
+    if 0 <= index < len(CRYPTO_PARAMS):
+        return CRYPTO_PARAMS[index]
+    return CRYPTO_PARAMS[0]
+
+
+def get_total_crypto_params() -> int:
+    """Возвращает количество параметров крипто-настроек."""
+    return len(CRYPTO_PARAMS)
+
+
+# ============================================================================
 # ПАРАМЕТРЫ ТАРИФОВ
 # ============================================================================
 
