@@ -284,6 +284,55 @@ def balance_payment_kb(
     return builder.as_markup()
 
 
+def _tariff_group_header(name: str) -> str:
+    """Красивый заголовок категории тарифов в inline-клавиатуре."""
+    normalized = (name or '').strip().lower()
+    if normalized == 'подписки':
+        return '🔁 Подписки'
+    if normalized == 'разовые':
+        return '⚡ Разовые'
+    return f"📂 {name or 'Другие'}"
+
+
+def _auto_group_tariffs(tariffs: list) -> list:
+    """Группирует тарифы по tariff_groups, сохраняя порядок категорий из админки."""
+    if not tariffs:
+        return []
+
+    try:
+        from database.requests import get_all_groups
+        groups = get_all_groups()
+    except Exception:
+        return []
+
+    if not groups:
+        return []
+
+    tariffs_by_id = {tariff.get('id'): tariff for tariff in tariffs}
+    used_ids = set()
+    grouped = []
+
+    for group in groups:
+        group_id = group.get('id')
+        group_tariffs = [
+            tariff for tariff in tariffs
+            if tariff.get('group_id') == group_id
+        ]
+        if not group_tariffs:
+            continue
+        grouped.append({'group': group, 'tariffs': group_tariffs})
+        used_ids.update(tariff.get('id') for tariff in group_tariffs)
+
+    orphan_tariffs = [
+        tariff for tariff_id, tariff in tariffs_by_id.items()
+        if tariff_id not in used_ids
+    ]
+    if orphan_tariffs and grouped:
+        grouped.append({'group': {'id': 0, 'name': 'Другие'}, 'tariffs': orphan_tariffs})
+
+    return grouped
+
+
 def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False, groups_data: list = None, is_demo: bool = False, is_wata: bool = False, is_platega: bool = False, is_cardlink: bool = False) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора тарифа для оплаты Stars, Картами, Криптой или Балансом.
@@ -299,7 +348,7 @@ def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: st
         is_demo: True если выбор тарифа для демонстрационной РФ оплаты
         is_wata: True если выбор тарифа для оплаты через WATA
         groups_data: Список dict с ключами 'group' и 'tariffs' для группировки.
-                     Если None — tariffs отображаются без группировки.
+                     Если None — тарифы автоматически группируются по tariff_groups.
     """
     builder = InlineKeyboardBuilder()
     
@@ -378,25 +427,22 @@ def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: st
                 )
             )
     
-    if groups_data:
-        # Группированный режим: заголовки + тарифы
-        for group_item in groups_data:
+    effective_groups = groups_data if groups_data is not None else _auto_group_tariffs(tariffs)
+
+    if effective_groups:
+        for group_item in effective_groups:
             group = group_item['group']
             group_tariffs = group_item['tariffs']
-            
             if not group_tariffs:
                 continue
-            
-            # Заголовок группы (кнопка-noop)
             builder.row(
                 InlineKeyboardButton(
-                    text=f"📂⬇ {group['name']}",
+                    text=_tariff_group_header(group.get('name')),
                     callback_data="noop"
                 )
             )
             _add_tariff_buttons(group_tariffs)
     else:
-        # Обычный режим без группировки
         _add_tariff_buttons(tariffs)
     
     builder.row(
@@ -905,4 +951,3 @@ def referral_menu_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🈴 На главную", callback_data="start")
     )
     return builder.as_markup()
-
