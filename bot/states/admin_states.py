@@ -76,6 +76,7 @@ class AdminStates(StatesGroup):
     add_tariff_duration = State()    # Шаг 5: Длительность
     add_tariff_traffic_limit = State() # Шаг 6: Лимит трафика (ГБ)
     add_tariff_max_ips = State()     # Шаг 7: Лимит устройств (IP)
+    add_tariff_billing_type = State() # Шаг 8: Тип оплаты
     add_tariff_confirm = State()     # Подтверждение
 
     # ========== Редактирование тарифа ==========
@@ -264,6 +265,14 @@ TARIFF_PARAMS = [
         "error": "Введите число от 0 до 99999 (0 = безлимит)",
         "convert": int,
         "format": lambda x: "Безлимит" if x == 0 else f"{x} устройств"
+    },
+    {
+        "key": "billing_type",
+        "label": "Тип оплаты",
+        "hint": "one_time = разовая покупка, recurring = подписка с автопродлением",
+        "validate": lambda x: x in ("one_time", "recurring"),
+        "error": "Выберите тип оплаты кнопкой",
+        "format": lambda x: "Подписка с автопродлением" if x == "recurring" else "Разовая покупка"
     },
 ]
 
