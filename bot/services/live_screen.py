@@ -1,0 +1,133 @@
+import logging
+from typing import Optional, Union
+
+from aiogram.types import CallbackQuery, Message
+
+from bot.utils.text import safe_edit_or_send, send_media_or_text
+from database.requests import clear_live_screen, get_live_screen, get_setting, save_live_screen
+
+logger = logging.getLogger(__name__)
+
+LIVE_SCREEN_ENABLED_SETTING = 'live_screen_enabled'
+
+
+def is_live_screen_enabled() -> bool:
+    return get_setting(LIVE_SCREEN_ENABLED_SETTING, '0') == '1'
+
+
+def _target_message(target: Union[CallbackQuery, Message]) -> Optional[Message]:
+    return target.message if isinstance(target, CallbackQuery) else target
+
+
+def _target_user_id(target: Union[CallbackQuery, Message], message: Message) -> Optional[int]:
+    if isinstance(target, CallbackQuery):
+        return target.from_user.id
+    if message.from_user and not message.from_user.is_bot:
+        return message.from_user.id
+    chat = getattr(message, 'chat', None)
+    if chat and getattr(chat, 'type', None) == 'private':
+        return chat.id
+    return None
+
+
+async def _delete_previous_live_screen(
+    *,
+    bot,
+    telegram_id: int,
+) -> None:
+    previous = get_live_screen(telegram_id)
+    if not previous:
+        return
+
+    previous_message_id = previous.get('message_id')
+    try:
+        await bot.delete_message(
+            chat_id=previous['chat_id'],
+            message_id=previous_message_id,
+        )
+    except Exception as exc:
+        logger.debug(
+            "Could not delete previous live screen telegram_id=%s message_id=%s: %s",
+            telegram_id,
+            previous_message_id,
+            exc,
+        )
+
+
+async def show_live_screen(
+    target: Union[CallbackQuery, Message],
+    text: str,
+    *,
+    reply_markup=None,
+    media: Optional[Union[str, object]] = None,
+    media_type: Optional[str] = None,
+    screen_key: Optional[str] = None,
+    force_new: bool = True,
+) -> Message:
+    message = _target_message(target)
+    if message is None:
+        raise ValueError("Live screen target has no message")
+
+    telegram_id = _target_user_id(target, message)
+    if not telegram_id or not is_live_screen_enabled():
+        return await safe_edit_or_send(
+            message,
+            text,
+            reply_markup=reply_markup,
+            media=media,
+            media_type=media_type,
+            force_new=force_new,
+        )
+
+    if not force_new:
+        rendered = await safe_edit_or_send(
+            message,
+            text,
+            reply_markup=reply_markup,
+            media=media,
+            media_type=media_type,
+            force_new=False,
+        )
+    else:
+        await _delete_previous_live_screen(
+            bot=message.bot,
+            telegram_id=telegram_id,
+        )
+        rendered = await send_media_or_text(
+            message.bot,
+            chat_id=message.chat.id,
+            text=text,
+            reply_markup=reply_markup,
+            media=media,
+            media_type=media_type,
+        )
+
+    if rendered and getattr(rendered, 'message_id', None):
+        save_live_screen(
+            telegram_id=telegram_id,
+            chat_id=rendered.chat.id,
+            message_id=rendered.message_id,
+            screen_key=screen_key,
+        )
+    return rendered
+
+
+async def clear_live_screen_message(
+    target: Union[CallbackQuery, Message],
+    *,
+    delete_message: bool = False,
+) -> None:
+    message = _target_message(target)
+    if message is None:
+        return
+
+    telegram_id = _target_user_id(target, message)
+    if not telegram_id:
+        return
+
+    if delete_message:
+        await _delete_previous_live_screen(
+            bot=message.bot,
+            telegram_id=telegram_id,
+        )
+    clear_live_screen(telegram_id)
