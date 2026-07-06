@@ -97,13 +97,13 @@ async def _build_my_keys_render_data(telegram_id: int):
 
 async def _render_my_keys_page(target, telegram_id: int, force_new: bool = False) -> None:
     """Рендерит страницу «Мои ключи» из таблицы pages."""
-    from bot.utils.page_renderer import render_page
+    from bot.utils.live_page_renderer import render_live_page
 
     keys, keys_list_text, key_buttons = await _build_my_keys_render_data(telegram_id)
     context = {'telegram_id': telegram_id}
 
     if not keys:
-        await render_page(
+        await render_live_page(
             target,
             page_key='my_keys_empty',
             context=context,
@@ -111,7 +111,7 @@ async def _render_my_keys_page(target, telegram_id: int, force_new: bool = False
         )
         return
 
-    await render_page(
+    await render_live_page(
         target,
         page_key='my_keys',
         context=context,
@@ -167,7 +167,7 @@ async def show_key_details(telegram_id: int, key_id: int, message, is_callback: 
     from bot.keyboards.user import key_manage_kb
     from bot.services.vpn_api import format_traffic
     from bot.utils.key_pages import build_key_details_replacements, keyboard_rows
-    from bot.utils.page_renderer import render_page
+    from bot.utils.live_page_renderer import render_live_page
     import logging
     logger = logging.getLogger(__name__)
     key = get_key_details_for_user(key_id, telegram_id)
@@ -251,7 +251,7 @@ async def show_key_details(telegram_id: int, key_id: int, message, is_callback: 
         button_rows.append([
             InlineKeyboardButton(text='⛔ Отключить автопродление', callback_data=f'key_unlink_card:{key_id}')
         ])
-    await render_page(
+    await render_live_page(
         message,
         page_key='key_details',
         context={'telegram_id': telegram_id, 'key_id': key_id},
