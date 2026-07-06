@@ -109,7 +109,7 @@ async def _render_main_page(target, force_new: bool = False):
         target: Message или CallbackQuery
         force_new: Принудительно отправить новое сообщение
     """
-    from bot.utils.page_renderer import render_page
+    from bot.utils.live_page_renderer import render_live_page
     from database.requests import is_trial_enabled, get_trial_tariff_id, has_used_trial
 
     # Определяем telegram_id
@@ -145,7 +145,7 @@ async def _render_main_page(target, force_new: bool = False):
             [InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")]
         ]
 
-    await render_page(
+    await render_live_page(
         target,
         page_key='main',
         visibility=visibility,
