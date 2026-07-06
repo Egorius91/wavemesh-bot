@@ -17,6 +17,7 @@ from database.db_settings import *
 from database.db_pages import *
 from database.db_backup import *
 from database.db_subscriptions import *
+from database.db_live_screens import *
 
 
 def fail_order(order_id: str) -> bool:
