@@ -418,6 +418,145 @@ async def key_renew_select_payment(callback: CallbackQuery):
     await show_renew_payment_page(callback, key, key_id)
     await callback.answer()
 
+
+def _days_left_for_replace(key: dict) -> int:
+    from datetime import datetime, timezone
+    import math
+
+    expires_at = key.get('expires_at')
+    if not expires_at:
+        return 365
+    try:
+        dt = datetime.fromisoformat(str(expires_at).replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(1, math.ceil((dt - datetime.now(timezone.utc)).total_seconds() / 86400))
+    except (TypeError, ValueError):
+        return 30
+
+
+async def _delete_old_key_client_best_effort(key: dict) -> None:
+    old_server_id = key.get('server_id')
+    old_email = key.get('panel_email')
+    if not old_server_id or not old_email:
+        return
+
+    try:
+        from bot.services.vpn_api import get_client
+
+        old_client = await get_client(old_server_id)
+        if key.get('sub_id') and hasattr(old_client, 'delete_clients_by_email_on_server'):
+            await old_client.delete_clients_by_email_on_server(old_email)
+            return
+
+        old_inbound_id = key.get('panel_inbound_id')
+        old_uuid = key.get('client_uuid')
+        if old_inbound_id and old_uuid:
+            await old_client.delete_client(int(old_inbound_id), old_uuid)
+        elif hasattr(old_client, 'delete_clients_by_email_on_server'):
+            await old_client.delete_clients_by_email_on_server(old_email)
+    except Exception as e:
+        logger.warning(
+            "Key replace: failed to delete old panel client for key_id=%s: %s",
+            key.get('id'),
+            e,
+        )
+
+
+async def _replace_key_panel_config(callback: CallbackQuery, key: dict, server_id: int, inbound_id: int | None) -> dict:
+    import uuid as _uuid
+    from database.requests import get_tariff_by_id, update_vpn_key_config, get_key_details_for_user
+    from bot.handlers.admin.users_keys import generate_unique_email
+    from bot.services.vpn_api import get_client, is_subscription_mode, sync_key_to_panel_state
+
+    client = await get_client(server_id)
+    tariff = get_tariff_by_id(key.get('tariff_id')) if key.get('tariff_id') else None
+    total_gb = int((key.get('traffic_limit') or 0) / (1024 ** 3)) if key.get('traffic_limit') else 0
+    limit_ip = tariff.get('max_ips', 1) if tariff else 1
+    days_left = _days_left_for_replace(key)
+    panel_email = generate_unique_email({
+        'telegram_id': callback.from_user.id,
+        'username': callback.from_user.username,
+    })
+
+    if is_subscription_mode():
+        inbounds = await client.get_inbounds()
+        if not inbounds:
+            raise RuntimeError('На сервере нет доступных протоколов')
+
+        sub_id = _uuid.uuid4().hex
+        first_uuid = None
+        first_inbound_id = None
+        created = 0
+        for inbound in inbounds:
+            try:
+                flow = await client.get_inbound_flow(inbound['id'])
+                result = await client.add_client(
+                    inbound_id=inbound['id'],
+                    email=panel_email,
+                    total_gb=total_gb,
+                    expire_days=days_left,
+                    limit_ip=limit_ip,
+                    enable=True,
+                    tg_id=str(callback.from_user.id),
+                    flow=flow,
+                    sub_id=sub_id,
+                )
+                if first_inbound_id is None or inbound['id'] < first_inbound_id:
+                    first_inbound_id = inbound['id']
+                    first_uuid = result['uuid']
+                created += 1
+            except Exception as e:
+                logger.warning(
+                    "Key replace: failed to create subscription client in inbound %s for key_id=%s: %s",
+                    inbound.get('id'),
+                    key.get('id'),
+                    e,
+                )
+
+        if not created or not first_uuid or first_inbound_id is None:
+            raise RuntimeError('Не удалось создать новый ключ на выбранном сервере')
+
+        update_vpn_key_config(
+            key_id=key['id'],
+            server_id=server_id,
+            panel_inbound_id=first_inbound_id,
+            panel_email=panel_email,
+            client_uuid=first_uuid,
+            sub_id=sub_id,
+        )
+    else:
+        if inbound_id is None:
+            raise RuntimeError('Не выбран протокол')
+
+        flow = await client.get_inbound_flow(inbound_id)
+        result = await client.add_client(
+            inbound_id=inbound_id,
+            email=panel_email,
+            total_gb=total_gb,
+            expire_days=days_left,
+            limit_ip=limit_ip,
+            enable=True,
+            tg_id=str(callback.from_user.id),
+            flow=flow,
+        )
+        update_vpn_key_config(
+            key_id=key['id'],
+            server_id=server_id,
+            panel_inbound_id=inbound_id,
+            panel_email=panel_email,
+            client_uuid=result['uuid'],
+            sub_id=None,
+        )
+
+    sync_stats = await sync_key_to_panel_state(key['id'])
+    if not sync_stats.get('ok'):
+        logger.warning("Key replace: key_id=%s synced with warnings: %s", key.get('id'), sync_stats)
+
+    await _delete_old_key_client_best_effort(key)
+    return get_key_details_for_user(key['id'], callback.from_user.id)
+
+
 @router.callback_query(F.data.startswith('key_replace:'))
 async def key_replace_start_handler(callback: CallbackQuery, state: FSMContext):
     """Начало процедуры замены ключа."""
@@ -450,13 +589,79 @@ async def key_replace_start_handler(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
+
+@router.callback_query(ReplaceKey.users_inbound, F.data.startswith('replace_inbound:'))
+async def key_replace_inbound_handler(callback: CallbackQuery, state: FSMContext):
+    from database.requests import get_key_details_for_user, get_server_by_id
+    from bot.keyboards.user import replace_confirm_kb
+    from bot.utils.key_pages import REPLACE_DATA_PLACEHOLDER, build_replace_confirm_data, keyboard_rows
+    from bot.utils.page_renderer import render_page
+
+    inbound_id = int(callback.data.split(':')[1])
+    data = await state.get_data()
+    key_id = data.get('replace_key_id')
+    server_id = data.get('replace_server_id')
+    key = get_key_details_for_user(key_id, callback.from_user.id)
+    server = get_server_by_id(server_id)
+    if not key or not server:
+        await callback.answer('❌ Данные замены устарели. Начните замену заново.', show_alert=True)
+        await state.clear()
+        return
+
+    await state.update_data(replace_inbound_id=inbound_id)
+    await state.set_state(ReplaceKey.confirm)
+    await render_page(
+        callback,
+        page_key='key_replace_confirm',
+        text_replacements={REPLACE_DATA_PLACEHOLDER: build_replace_confirm_data(key, server, subscription_mode=False)},
+        prepend_buttons=keyboard_rows(replace_confirm_kb(int(key_id))),
+    )
+    await callback.answer()
+
+
+@router.callback_query(ReplaceKey.confirm, F.data == 'replace_confirm')
+async def key_replace_confirm_handler(callback: CallbackQuery, state: FSMContext):
+    from database.requests import get_key_details_for_user
+    from bot.keyboards.user import key_issued_kb
+    from bot.utils.key_sender import send_key_with_qr
+
+    data = await state.get_data()
+    key_id = data.get('replace_key_id')
+    server_id = data.get('replace_server_id')
+    inbound_id = data.get('replace_inbound_id')
+
+    key = get_key_details_for_user(key_id, callback.from_user.id)
+    if not key or not server_id:
+        await callback.answer('❌ Данные замены устарели. Начните замену заново.', show_alert=True)
+        await state.clear()
+        return
+
+    await safe_edit_or_send(callback.message, '⏳ Заменяем ключ...')
+    try:
+        new_key = await _replace_key_panel_config(
+            callback=callback,
+            key=key,
+            server_id=int(server_id),
+            inbound_id=int(inbound_id) if inbound_id else None,
+        )
+        await state.clear()
+        await callback.answer('✅ Ключ заменён')
+        await send_key_with_qr(callback, new_key, key_issued_kb(), is_new=False)
+    except Exception as e:
+        logger.error("Key replace failed for key_id=%s: %s", key_id, e)
+        await callback.answer('❌ Не удалось заменить ключ', show_alert=True)
+        await safe_edit_or_send(
+            callback.message,
+            f'❌ Не удалось заменить ключ: {escape_html(str(e))}\n\nПопробуйте ещё раз или обратитесь в поддержку.'
+        )
+
 @router.callback_query(ReplaceKey.users_server, F.data.startswith('replace_server:'))
 async def key_replace_server_handler(callback: CallbackQuery, state: FSMContext):
     """Выбор сервера для замены."""
     from database.requests import get_server_by_id, get_key_details_for_user
     from bot.services.vpn_api import get_client, VPNAPIError, is_subscription_mode
     from bot.keyboards.user import replace_inbound_list_kb, replace_confirm_kb
-    from bot.utils.key_pages import build_replace_confirm_data, build_server_screen_data, keyboard_rows
+    from bot.utils.key_pages import REPLACE_DATA_PLACEHOLDER, build_replace_confirm_data, build_server_screen_data, keyboard_rows
     from bot.utils.page_renderer import render_page
     server_id = int(callback.data.split(':')[1])
     server = get_server_by_id(server_id)
@@ -464,10 +669,10 @@ async def key_replace_server_handler(callback: CallbackQuery, state: FSMContext)
         await callback.answer('Сервер не найден', show_alert=True)
         return
     await state.update_data(replace_server_id=server_id)
+    data = await state.get_data()
 
     # Subscription mode: пропускаем выбор inbound — сразу подтверждение
     if is_subscription_mode():
-        data = await state.get_data()
         key_id = data.get('replace_key_id')
         key = get_key_details_for_user(key_id, callback.from_user.id)
         if not key:
@@ -475,6 +680,7 @@ async def key_replace_server_handler(callback: CallbackQuery, state: FSMContext)
             return
         # Минимальная проба сервера (получим inbounds позже при выполнении)
         await state.update_data(replace_inbound_id=0)
+        await state.set_state(ReplaceKey.confirm)
         await render_page(
             callback,
             page_key='key_replace_confirm',
@@ -495,10 +701,32 @@ async def key_replace_server_handler(callback: CallbackQuery, state: FSMContext)
         await callback.answer('Ошибка подключения к серверу', show_alert=True)
         return
 
+    if not inbounds:
+        await callback.answer('❌ На сервере нет доступных протоколов', show_alert=True)
+        return
+
+    key_id = int(data.get('replace_key_id'))
+    if len(inbounds) == 1:
+        key = get_key_details_for_user(key_id, callback.from_user.id)
+        if not key:
+            await callback.answer('❌ Ключ не найден', show_alert=True)
+            return
+        await state.update_data(replace_inbound_id=inbounds[0]['id'])
+        await state.set_state(ReplaceKey.confirm)
+        await render_page(
+            callback,
+            page_key='key_replace_confirm',
+            text_replacements={REPLACE_DATA_PLACEHOLDER: build_replace_confirm_data(key, server, subscription_mode=False)},
+            prepend_buttons=keyboard_rows(replace_confirm_kb(key_id)),
+        )
+        await callback.answer()
+        return
+
+    await state.set_state(ReplaceKey.users_inbound)
     await render_page(
         callback,
         page_key='key_replace_inbound_select',
         text_replacements={'%данныеэкрана%': build_server_screen_data(server)},
-        prepend_buttons=keyboard_rows(replace_inbound_list_kb(inbounds, int(data.get('replace_key_id')))),
+        prepend_buttons=keyboard_rows(replace_inbound_list_kb(inbounds, key_id)),
     )
     await callback.answer()
