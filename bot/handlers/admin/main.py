@@ -22,6 +22,44 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+@router.message(Command('yaa'))
+async def cmd_context_page_editor(message: Message, state: FSMContext):
+    """Открывает редактор последней пользовательской страницы, которую видел админ."""
+    if not is_admin(message.from_user.id):
+        return
+
+    from bot.handlers.admin.message_editor import show_message_editor
+    from bot.services.page_context import get_page_context
+
+    page_context = get_page_context(message.from_user.id)
+    if not page_context:
+        await safe_edit_or_send(
+            message,
+            "ℹ️ <b>Нет экрана для редактирования</b>\n\n"
+            "Откройте нужный экран в пользовательской части бота и затем отправьте /yaa.",
+            force_new=True,
+        )
+        return
+
+    help_text = (
+        "📌 <b>Редактирование экрана</b>\n\n"
+        "Отправьте новое сообщение боту:\n"
+        "• текст — чтобы заменить текст экрана;\n"
+        "• фото/видео/GIF с подписью — чтобы заменить текст и изображение.\n\n"
+        "Динамические плейсхолдеры экрана нужно сохранить, если они есть: "
+        "<code>%тарифы%</code>, <code>%данныеэкрана%</code>, <code>%списокключей%</code>."
+    )
+
+    await show_message_editor(
+        message,
+        state,
+        key=page_context.page_key,
+        back_callback='start',
+        help_text=help_text,
+        allowed_types=['text', 'photo', 'video', 'animation'],
+    )
+
+
 # ============================================================================
 # ПРОВЕРКА АДМИНИСТРАТОРА
 # ============================================================================
