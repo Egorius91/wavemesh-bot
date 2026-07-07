@@ -46,7 +46,6 @@ async def cmd_context_page_editor(message: Message, state: FSMContext):
         "Отправьте новое сообщение боту:\n"
         "• текст — чтобы заменить текст экрана;\n"
         "• фото/видео/GIF с подписью — чтобы заменить текст и изображение.\n\n"
-        "Для широкого URL-превью отправьте: <code>preview_url: https://example.com/image.jpg</code>\n\n"
         "Динамические плейсхолдеры экрана нужно сохранить, если они есть: "
         "<code>%тарифы%</code>, <code>%данныеэкрана%</code>, <code>%списокключей%</code>."
     )
@@ -57,7 +56,7 @@ async def cmd_context_page_editor(message: Message, state: FSMContext):
         key=page_context.page_key,
         back_callback='start',
         help_text=help_text,
-        allowed_types=['text', 'photo', 'video', 'animation', 'preview'],
+        allowed_types=['text', 'photo', 'video', 'animation'],
     )
 
 

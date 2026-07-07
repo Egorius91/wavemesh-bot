@@ -145,7 +145,7 @@ async def show_live_screen(
             bot=message.bot,
             telegram_id=telegram_id,
         )
-        if media is not None and media_type != 'preview':
+        if media is not None:
             media_message = await _send_media_header(
                 message.bot,
                 chat_id=message.chat.id,
