@@ -568,8 +568,9 @@ async def check_qr_payment_flow(
             return
         await state.update_data({last_check_key: now})
 
-    # 6. Уведомление о проверке
-    if callback:
+    # 6. Уведомление о проверке. Для live-screen не отвечаем заранее:
+    # pending должен быть единственным callback alert, иначе Telegram может скрыть его.
+    if callback and not live_screen:
         await callback.answer('🔍 Проверяем платёж...')
 
     # 7. Вызов API проверки
@@ -630,4 +631,9 @@ async def check_qr_payment_flow(
         pending_message_text = '⏳ <b>Платёж ещё не поступил</b>\n\nОплатите по ссылке и нажмите «✅ Я оплатил» снова.'
         if pending_hint:
             pending_message_text += f'\n\n<i>{pending_hint}</i>'
-        await _show_status(pending_message_text, force_new=True)
+        if live_screen:
+            # Возврат из платёжной формы приходит как /start deep-link, а не callback.
+            # Не регистрируем pending как live-screen, чтобы не удалить QR оплаты.
+            await safe_edit_or_send(message, pending_message_text, force_new=True)
+        else:
+            await _show_status(pending_message_text, force_new=True)

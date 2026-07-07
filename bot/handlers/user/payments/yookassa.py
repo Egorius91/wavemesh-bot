@@ -477,8 +477,8 @@ async def _run_yookassa_recurring_check(message, state, order_id: str, telegram_
             await callback.answer('⚠️ Нет данных о платеже. Попробуйте чуть позже.', show_alert=True)
         return
 
-    if callback:
-        await callback.answer('🔍 Проверяем платёж...')
+    # Не отвечаем callback заранее: pending должен быть единственным alert,
+    # иначе Telegram может скрыть итоговое уведомление.
 
     try:
         payment = await get_yookassa_payment(payment_id)
@@ -504,10 +504,11 @@ async def _run_yookassa_recurring_check(message, state, order_id: str, telegram_
         if callback:
             await callback.answer(pending_text, show_alert=True)
         else:
-            await show_live_screen(
+            # Возврат из YooKassa приходит как /start deep-link, а не callback.
+            # Не регистрируем pending как live-screen, чтобы не удалить QR оплаты.
+            await safe_edit_or_send(
                 message,
                 '⏳ <b>Платёж ещё не поступил</b>\n\nОплатите по ссылке и нажмите «✅ Я оплатил» снова.\n\n<i>Если только что оплатили — подождите пару секунд.</i>',
-                screen_key='yookassa_payment_pending',
                 force_new=True,
             )
 
