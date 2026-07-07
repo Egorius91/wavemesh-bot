@@ -172,7 +172,7 @@ def get_message_text_for_storage(
         return ""
 
 
-SUPPORTED_MEDIA_TYPES = {'photo', 'video', 'animation'}
+SUPPORTED_MEDIA_TYPES = {'photo', 'video', 'animation', 'preview'}
 
 
 def normalize_media_type(media_type: Optional[str], *, media: object = None) -> Optional[str]:
@@ -180,6 +180,17 @@ def normalize_media_type(media_type: Optional[str], *, media: object = None) -> 
     if media is None:
         return None
     return media_type if media_type in SUPPORTED_MEDIA_TYPES else 'photo'
+
+
+def _link_preview_options(*, is_disabled: bool = True, url: Optional[str] = None) -> LinkPreviewOptions:
+    if url:
+        return LinkPreviewOptions(
+            is_disabled=False,
+            url=url,
+            prefer_large_media=True,
+            show_above_text=True,
+        )
+    return LinkPreviewOptions(is_disabled=is_disabled)
 
 
 def _input_media_for_type(media: object, media_type: str, caption: str):
@@ -224,14 +235,16 @@ async def send_media_or_text(
 ) -> Message:
     """Отправляет обычное сообщение или медиа с HTML caption."""
     normalized_media_type = normalize_media_type(media_type, media=media)
-    text = prepare_telegram_text(text, has_media=media is not None)
+    is_preview = normalized_media_type == 'preview' and isinstance(media, str) and media.startswith(('http://', 'https://'))
+    text = prepare_telegram_text(text, has_media=media is not None and not is_preview)
 
-    if media is None:
+    if media is None or is_preview:
         return await bot.send_message(
             chat_id=chat_id,
             text=text,
             reply_markup=reply_markup,
             parse_mode='HTML',
+            link_preview_options=_link_preview_options(url=media if is_preview else None),
         )
     if normalized_media_type == 'video':
         return await bot.send_video(
@@ -297,12 +310,16 @@ async def safe_edit_or_send(
         media_type = media_type or 'photo'
 
     normalized_media_type = normalize_media_type(media_type, media=media)
+    is_preview = normalized_media_type == 'preview' and isinstance(media, str) and media.startswith(('http://', 'https://'))
     is_current_media = bool(message.photo or message.video or message.document or message.animation)
-    want_media = media is not None
+    want_media = media is not None and not is_preview
     text = prepare_telegram_text(text, has_media=want_media)
     
     # Отключаем превью ссылок по умолчанию. Включаем только если show_web_page_preview=True
-    link_preview = LinkPreviewOptions(is_disabled=not show_web_page_preview)
+    link_preview = _link_preview_options(
+        is_disabled=not show_web_page_preview,
+        url=media if is_preview else None,
+    )
     
     # Если requested force_new, просто отправляем новое сообщение без удаления старого
     if force_new:

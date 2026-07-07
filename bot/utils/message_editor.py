@@ -8,6 +8,7 @@
 """
 import json
 import logging
+import re
 from typing import Optional, List
 
 from aiogram.types import (
@@ -21,7 +22,8 @@ from database.requests import get_setting, set_setting
 logger = logging.getLogger(__name__)
 
 # Допустимые типы медиа
-ALL_MEDIA_TYPES = ['text', 'photo', 'video', 'animation']
+ALL_MEDIA_TYPES = ['text', 'photo', 'video', 'animation', 'preview']
+PREVIEW_URL_RE = re.compile(r'^\s*(?:preview_url|image_url)\s*:\s*(https?://\S+)\s*$', re.IGNORECASE)
 
 
 # Ключи, которые хранятся в новой таблице pages
@@ -71,13 +73,13 @@ def _page_media_type_value(row: dict, image: Optional[str]) -> Optional[str]:
         media_type = row.get('media_type_custom')
     else:
         media_type = row.get('media_type_default')
-    return media_type if media_type in {'photo', 'video', 'animation'} else 'photo'
+    return media_type if media_type in {'photo', 'video', 'animation', 'preview'} else 'photo'
 
 
 def _media_from_parts(data: dict) -> tuple[Optional[str], Optional[str]]:
     media_type = data.get('media_type')
     media_file_id = data.get('media_file_id')
-    if media_file_id and media_type in {'photo', 'video', 'animation'}:
+    if media_file_id and media_type in {'photo', 'video', 'animation', 'preview'}:
         return media_file_id, media_type
     if data.get('animation_file_id'):
         return data.get('animation_file_id'), 'animation'
@@ -89,7 +91,7 @@ def _media_from_parts(data: dict) -> tuple[Optional[str], Optional[str]]:
 
 
 def _with_media_fields(text: str, media_file_id: Optional[str], media_type: Optional[str]) -> dict:
-    media_type = media_type if media_type in {'photo', 'video', 'animation'} and media_file_id else None
+    media_type = media_type if media_type in {'photo', 'video', 'animation', 'preview'} and media_file_id else None
     return {
         'text': text,
         'photo_file_id': media_file_id if media_type == 'photo' else None,
@@ -178,6 +180,19 @@ def save_message_data(key: str, message: Message, allowed_types: Optional[List[s
         current_media_file_id,
         current_media_type,
     )
+
+    if message.text:
+        preview_match = PREVIEW_URL_RE.match(message.text)
+        if preview_match:
+            data.update(_with_media_fields(data.get('text', ''), preview_match.group(1), 'preview'))
+            if key in PAGE_KEYS:
+                from database.requests import update_page_custom
+                update_page_custom(key, image=data['media_file_id'], media_type='preview')
+                logger.info(f"Preview URL сохранён в pages: {key}")
+            else:
+                set_setting(key, json.dumps(data, ensure_ascii=False))
+                logger.info(f"Preview URL сохранён в settings: {key}")
+            return data
     
     # Определяем тип сообщения и извлекаем медиа
     if message.animation:
@@ -246,8 +261,10 @@ def detect_message_type(message: Message) -> str:
     Определяет тип входящего сообщения.
     
     Returns:
-        'animation', 'video', 'photo' или 'text'
+        'animation', 'video', 'photo', 'preview' или 'text'
     """
+    if message.text and PREVIEW_URL_RE.match(message.text):
+        return 'preview'
     if message.animation:
         return 'animation'
     if message.video:

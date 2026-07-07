@@ -52,7 +52,7 @@ async def show_message_editor(
         Объект Message после рендера (для сохранения в FSM)
     """
     if allowed_types is None:
-        allowed_types = ['text', 'photo', 'video', 'animation']
+        allowed_types = ['text', 'photo', 'video', 'animation', 'preview']
     
     message_data = get_message_data(key)
     media_type = message_data.get('media_type')
@@ -139,7 +139,7 @@ async def delete_editor_media(callback: CallbackQuery, state: FSMContext):
     key = data.get('editing_key')
     back_callback = data.get('back_callback')
     help_text = data.get('help_text')
-    allowed_types = data.get('allowed_types', ['text', 'photo', 'video', 'animation'])
+    allowed_types = data.get('allowed_types', ['text', 'photo', 'video', 'animation', 'preview'])
 
     if not key:
         await callback.answer("❌ Ошибка состояния", show_alert=True)
@@ -209,7 +209,7 @@ async def handle_editor_input(message: Message, state: FSMContext):
     key = data.get('editing_key')
     back_callback = data.get('back_callback')
     help_text = data.get('help_text')
-    allowed_types = data.get('allowed_types', ['text', 'photo', 'video', 'animation'])
+    allowed_types = data.get('allowed_types', ['text', 'photo', 'video', 'animation', 'preview'])
     editor_message = data.get('editor_message')
     
     if not key:

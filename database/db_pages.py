@@ -68,7 +68,7 @@ def update_page_custom(
         params.append(image)
         if image:
             updates.append("media_type_custom = ?")
-            params.append(media_type if media_type in {'photo', 'video', 'animation'} else 'photo')
+            params.append(media_type if media_type in {'photo', 'video', 'animation', 'preview'} else 'photo')
         else:
             updates.append("media_type_custom = NULL")
     if buttons is not None:
@@ -108,7 +108,7 @@ def upsert_page_defaults(
         media_type: Тип дефолтного медиа: photo, video или animation
         buttons: JSON-строка массива кнопок
     """
-    normalized_media_type = media_type if media_type in {'photo', 'video', 'animation'} else None
+    normalized_media_type = media_type if media_type in {'photo', 'video', 'animation', 'preview'} else None
     if image and normalized_media_type is None:
         normalized_media_type = 'photo'
 

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Максимальное количество кнопок в одном ряду
 MAX_BUTTONS_PER_ROW = 2
-PAGE_MEDIA_TYPES = {'photo', 'video', 'animation'}
+PAGE_MEDIA_TYPES = {'photo', 'video', 'animation', 'preview'}
 ASSET_B64_PREFIX = 'asset_b64:'
 
 
