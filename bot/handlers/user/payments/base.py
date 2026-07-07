@@ -486,7 +486,7 @@ async def check_qr_payment_flow(
     )
     from bot.services.billing import complete_payment_flow
     from bot.keyboards.admin import home_only_kb
-    from bot.services.live_screen import clear_live_screen_message, show_live_screen
+    from bot.services.live_screen import clear_live_screen_message, show_live_notice, show_live_screen
 
     async def _show_status(text: str, *, reply_markup=None, force_new: bool = True) -> None:
         if live_screen:
@@ -636,8 +636,10 @@ async def check_qr_payment_flow(
         if pending_hint:
             pending_message_text += f'\n\n<i>{pending_hint}</i>'
         if live_screen:
-            # Возврат из платёжной формы приходит как /start deep-link, а не callback.
-            # Не регистрируем pending как live-screen, чтобы не удалить QR оплаты.
-            await safe_edit_or_send(message, pending_message_text, force_new=True)
+            await show_live_notice(
+                message,
+                pending_message_text,
+                notice_key=f'{payment_type}_payment_pending',
+            )
         else:
             await _show_status(pending_message_text, force_new=True)

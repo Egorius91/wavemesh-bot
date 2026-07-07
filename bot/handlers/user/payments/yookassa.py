@@ -5,7 +5,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from bot.utils.text import escape_html, safe_edit_or_send
-from bot.services.live_screen import show_live_screen
+from bot.services.live_screen import show_live_notice, show_live_screen
 from config import ADMIN_IDS
 from bot.handlers.user.payments.base import (
     create_qr_payment_flow, check_qr_payment_flow
@@ -502,12 +502,10 @@ async def _run_yookassa_recurring_check(message, state, order_id: str, telegram_
         if callback:
             await callback.answer(pending_text, show_alert=True)
         else:
-            # Возврат из YooKassa приходит как /start deep-link, а не callback.
-            # Не регистрируем pending как live-screen, чтобы не удалить QR оплаты.
-            await safe_edit_or_send(
+            await show_live_notice(
                 message,
                 '⏳ <b>Платёж ещё не поступил</b>\n\nОплатите по ссылке и нажмите «✅ Я оплатил» снова.\n\n<i>Если только что оплатили — подождите пару секунд.</i>',
-                force_new=True,
+                notice_key='yookassa_subscription_payment_pending',
             )
 
 
