@@ -3,7 +3,7 @@ from typing import Optional, Union
 
 from aiogram.types import CallbackQuery, Message
 
-from bot.utils.text import normalize_media_type, safe_edit_or_send, send_media_or_text
+from bot.utils.text import safe_edit_or_send, send_media_or_text
 from database.requests import (
     clear_live_notice,
     clear_live_screen,
@@ -86,21 +86,6 @@ async def _delete_previous_live_notice(
         )
 
 
-async def _send_media_header(
-    bot,
-    *,
-    chat_id: int,
-    media: Union[str, object],
-    media_type: Optional[str] = None,
-) -> Message:
-    normalized_media_type = normalize_media_type(media_type, media=media)
-    if normalized_media_type == 'video':
-        return await bot.send_video(chat_id=chat_id, video=media)
-    if normalized_media_type == 'animation':
-        return await bot.send_animation(chat_id=chat_id, animation=media)
-    return await bot.send_photo(chat_id=chat_id, photo=media)
-
-
 async def show_live_screen(
     target: Union[CallbackQuery, Message],
     text: str,
@@ -145,22 +130,6 @@ async def show_live_screen(
             bot=message.bot,
             telegram_id=telegram_id,
         )
-        if media is not None:
-            media_message = await _send_media_header(
-                message.bot,
-                chat_id=message.chat.id,
-                media=media,
-                media_type=media_type,
-            )
-            save_live_notice(
-                telegram_id=telegram_id,
-                chat_id=media_message.chat.id,
-                message_id=media_message.message_id,
-                notice_key=f'{screen_key or "live_screen"}_media',
-            )
-            media = None
-            media_type = None
-
         rendered = await send_media_or_text(
             message.bot,
             chat_id=message.chat.id,
