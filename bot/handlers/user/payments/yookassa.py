@@ -5,6 +5,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from bot.utils.text import escape_html, safe_edit_or_send
+from bot.services.live_screen import show_live_screen
 from config import ADMIN_IDS
 from bot.handlers.user.payments.base import (
     create_qr_payment_flow, check_qr_payment_flow
@@ -220,10 +221,10 @@ async def pay_qr_select_tariff(callback: CallbackQuery):
     tariffs = get_all_tariffs(include_hidden=False)
     rub_tariffs = [t for t in tariffs if t.get('price_rub') and t['price_rub'] > 0]
     if not rub_tariffs:
-        await safe_edit_or_send(callback.message, '📱 <b>QR-оплата</b>\n\n😔 Для QR-оплаты не настроены цены в рублях.\nОбратитесь к администратору.', reply_markup=home_only_kb())
+        await show_live_screen(callback, '📱 <b>QR-оплата</b>\n\n😔 Для QR-оплаты не настроены цены в рублях.\nОбратитесь к администратору.', reply_markup=home_only_kb(), screen_key='yookassa_tariffs')
         await callback.answer()
         return
-    await safe_edit_or_send(callback.message, '📱 <b>QR-оплата (Карта/СБП)</b>\n\nВыберите тариф:\n\n<i>Оплата через ЮКассу — поддерживает банковские карты и СБП.</i>', reply_markup=tariff_select_kb(rub_tariffs, is_qr=True))
+    await show_live_screen(callback, '📱 <b>QR-оплата (Карта/СБП)</b>\n\nВыберите тариф:\n\n<i>Оплата через ЮКассу — поддерживает банковские карты и СБП.</i>', reply_markup=tariff_select_kb(rub_tariffs, is_qr=True), screen_key='yookassa_tariffs')
     await callback.answer()
 
 
@@ -258,7 +259,7 @@ async def _create_yookassa_subscription_initial_flow(
     )
     save_order_subscription_context(order_id, is_recurring=1)
 
-    await safe_edit_or_send(callback.message, '⏳ Создаём платёж подписки...')
+    await show_live_screen(callback, '⏳ Создаём платёж подписки...', screen_key='yookassa_subscription_loading')
     try:
         bot_info = await callback.bot.get_me()
         bot_name = bot_info.username
@@ -293,24 +294,27 @@ async def _create_yookassa_subscription_initial_flow(
             hint_text='После оплаты нажмите «✅ Я оплатил». Автопродление можно будет отключить в карточке ключа.',
         )
         photo = BufferedInputFile(result['qr_image_data'], filename=_YK_QR_FILE)
-        await safe_edit_or_send(
-            callback.message,
+        await show_live_screen(
+            callback,
             text,
-            photo=photo,
+            media=photo,
+            media_type='photo',
             reply_markup=qr_payment_kb(
                 order_id,
                 _YK_CHECK_PREFIX,
                 f'renew_qr_tariff:{vpn_key_id}' if vpn_key_id else 'pay_qr',
                 result['qr_url'],
             ),
+            screen_key='yookassa_subscription_payment',
             force_new=True,
         )
     except (ValueError, RuntimeError) as e:
         logger.error('Ошибка создания первого платежа подписки ЮKassa: %s', e)
-        await safe_edit_or_send(
-            callback.message,
+        await show_live_screen(
+            callback,
             f'❌ <b>Ошибка создания платежа</b>\n\n<i>{escape_html(str(e))}</i>\n\nПопробуйте другой способ оплаты.',
             reply_markup=home_only_kb(),
+            screen_key='yookassa_payment_error',
         )
     await callback.answer()
 
@@ -347,6 +351,7 @@ async def qr_pay_create(callback: CallbackQuery):
         qr_filename=_YK_QR_FILE,
         back_callback='pay_qr',
         loading_text=_YK_LOADING,
+        live_screen=True,
     )
 
 
@@ -392,7 +397,7 @@ async def _finalize_recurring_yookassa_payment(message, state, order_id: str, te
         if callback:
             await callback.answer('❌ Ордер не найден', show_alert=True)
         else:
-            await safe_edit_or_send(message, '❌ Ордер не найден', reply_markup=home_only_kb())
+            await show_live_screen(message, '❌ Ордер не найден', reply_markup=home_only_kb(), screen_key='yookassa_payment_error')
         return
 
     owner_user_id = get_user_internal_id(telegram_id)
@@ -403,16 +408,17 @@ async def _finalize_recurring_yookassa_payment(message, state, order_id: str, te
         return
 
     if order.get('status') == 'paid' or is_order_already_paid(order_id):
-        await safe_edit_or_send(message, '✅ Оплата уже была обработана ранее.', reply_markup=home_only_kb(), force_new=True)
+        await show_live_screen(message, '✅ Оплата уже была обработана ранее.', reply_markup=home_only_kb(), screen_key='yookassa_payment_done', force_new=True)
         return
 
     method = payment.get('payment_method') or {}
     method_id = method.get('id') if isinstance(method, dict) else None
     if not method_id:
-        await safe_edit_or_send(
+        await show_live_screen(
             message,
             '⚠️ Оплата прошла, но ЮKassa не вернула сохранённый способ оплаты. Подписка не была активирована автоматически. Напишите в поддержку.',
             reply_markup=home_only_kb(),
+            screen_key='yookassa_payment_error',
             force_new=True,
         )
         return
@@ -462,7 +468,7 @@ async def _run_yookassa_recurring_check(message, state, order_id: str, telegram_
         if callback:
             await callback.answer('❌ Ордер не найден', show_alert=True)
         else:
-            await safe_edit_or_send(message, '❌ Ордер не найден', reply_markup=home_only_kb())
+            await show_live_screen(message, '❌ Ордер не найден', reply_markup=home_only_kb(), screen_key='yookassa_payment_error')
         return
 
     payment_id = order.get(_YK_RESULT_KEY)
@@ -478,7 +484,7 @@ async def _run_yookassa_recurring_check(message, state, order_id: str, telegram_
         payment = await get_yookassa_payment(payment_id)
     except Exception as e:
         logger.error('Ошибка проверки первого платежа подписки ЮKassa %s: %s', order_id, e)
-        await safe_edit_or_send(message, '❌ Не удалось проверить статус платежа. Попробуйте позже.', reply_markup=home_only_kb(), force_new=True)
+        await show_live_screen(message, '❌ Не удалось проверить статус платежа. Попробуйте позже.', reply_markup=home_only_kb(), screen_key='yookassa_payment_error', force_new=True)
         return
 
     status = payment.get('status', 'pending')
@@ -486,18 +492,24 @@ async def _run_yookassa_recurring_check(message, state, order_id: str, telegram_
         await _finalize_recurring_yookassa_payment(message, state, order_id, telegram_id, payment, callback=callback)
     elif status == 'canceled':
         fail_order(order_id)
-        await safe_edit_or_send(
+        await show_live_screen(
             message,
             '❌ <b>Платёж отменён</b>\n\nПохоже, платёж был отменён.\nПопробуйте снова выбрать тариф.',
             reply_markup=home_only_kb(),
+            screen_key='yookassa_payment_failed',
             force_new=True,
         )
     else:
-        await safe_edit_or_send(
-            message,
-            '⏳ <b>Платёж ещё не поступил</b>\n\nОплатите по ссылке и нажмите «✅ Я оплатил» снова.\n\n<i>Если только что оплатили — подождите пару секунд.</i>',
-            force_new=True,
-        )
+        pending_text = '⏳ Платёж ещё не поступил. Оплатите по ссылке и нажмите «✅ Я оплатил» снова.\n\nЕсли только что оплатили — подождите пару секунд.'
+        if callback:
+            await callback.answer(pending_text, show_alert=True)
+        else:
+            await show_live_screen(
+                message,
+                '⏳ <b>Платёж ещё не поступил</b>\n\nОплатите по ссылке и нажмите «✅ Я оплатил» снова.\n\n<i>Если только что оплатили — подождите пару секунд.</i>',
+                screen_key='yookassa_payment_pending',
+                force_new=True,
+            )
 
 
 async def _run_yookassa_check(message, state, order_id: str,
@@ -524,6 +536,7 @@ async def _run_yookassa_check(message, state, order_id: str,
         pending_hint='Если только что оплатили — подождите пару секунд.',
         callback=callback,
         referral_override_func=_yookassa_referral_amount,
+        live_screen=True,
     )
 
 
@@ -543,7 +556,7 @@ async def renew_qr_select_tariff(callback: CallbackQuery):
     if not rub_tariffs:
         await callback.answer('😔 Нет тарифов с ценой в рублях', show_alert=True)
         return
-    await safe_edit_or_send(callback.message, f"📱 <b>QR-оплата (Карта/СБП)</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите тариф для продления:", reply_markup=renew_tariff_select_kb(rub_tariffs, key_id, is_qr=True))
+    await show_live_screen(callback, f"📱 <b>QR-оплата (Карта/СБП)</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите тариф для продления:", reply_markup=renew_tariff_select_kb(rub_tariffs, key_id, is_qr=True), screen_key='yookassa_renew_tariffs')
     await callback.answer()
 
 @router.callback_query(F.data.startswith('renew_pay_qr:'))
@@ -582,4 +595,5 @@ async def renew_qr_create(callback: CallbackQuery):
         back_callback=f'renew_qr_tariff:{key_id}',
         loading_text=_YK_LOADING,
         key=key, vpn_key_id=key_id,
+        live_screen=True,
     )
