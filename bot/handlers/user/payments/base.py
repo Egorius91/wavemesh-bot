@@ -297,6 +297,7 @@ async def create_qr_payment_flow(
     vpn_key_id: int = None,
     hint_text: str = None,
     instruction_text: str = None,
+    live_screen: bool = False,
 ) -> None:
     """
     Универсальный flow создания QR-счёта для любого провайдера.
@@ -322,10 +323,32 @@ async def create_qr_payment_flow(
         vpn_key_id: ID ключа при продлении (None для покупки)
         hint_text: Пользовательская подсказка (None → стандартная)
         instruction_text: Пользовательская инструкция со ссылкой на оплату
+        live_screen: True, если экран оплаты должен участвовать в live-screen UX
     """
     from database.requests import get_user_internal_id, create_pending_order
     from bot.keyboards.user import qr_payment_kb
     from bot.keyboards.admin import home_only_kb
+    from bot.services.live_screen import show_live_screen
+
+    async def _show_payment_screen(text: str, *, reply_markup=None, photo=None, force_new: bool = False) -> None:
+        if live_screen:
+            await show_live_screen(
+                callback,
+                text,
+                reply_markup=reply_markup,
+                media=photo,
+                media_type='photo' if photo else None,
+                screen_key=f'{payment_type}_payment',
+                force_new=True,
+            )
+        else:
+            await safe_edit_or_send(
+                callback.message,
+                text,
+                photo=photo,
+                reply_markup=reply_markup,
+                force_new=force_new,
+            )
 
     # Валидация пользователя
     user_id = get_user_internal_id(callback.from_user.id)
@@ -339,7 +362,7 @@ async def create_qr_payment_flow(
         payment_type=payment_type, vpn_key_id=vpn_key_id
     )
 
-    await safe_edit_or_send(callback.message, loading_text)
+    await _show_payment_screen(loading_text)
 
     try:
         bot_info = await callback.bot.get_me()
@@ -379,10 +402,9 @@ async def create_qr_payment_flow(
         qr_url = result.get('qr_url', '')
 
         if not qr_image_data or not qr_url:
-            await safe_edit_or_send(
-                callback.message,
+            await _show_payment_screen(
                 f'❌ {error_name} не вернул данные для оплаты. Попробуйте позже.',
-                reply_markup=home_only_kb()
+                reply_markup=home_only_kb(),
             )
             return
 
@@ -401,18 +423,18 @@ async def create_qr_payment_flow(
         # Отправка QR-фото
         from aiogram.types import BufferedInputFile
         photo = BufferedInputFile(qr_image_data, filename=qr_filename)
-        await safe_edit_or_send(
-            callback.message, text, photo=photo,
+        await _show_payment_screen(
+            text,
+            photo=photo,
             reply_markup=qr_payment_kb(order_id, check_prefix, back_callback, qr_url),
-            force_new=True
+            force_new=True,
         )
     except (ValueError, RuntimeError) as e:
         logger.error(f'Ошибка создания {error_name}-счёта: {e}')
-        await safe_edit_or_send(
-            callback.message,
+        await _show_payment_screen(
             f'❌ <b>Ошибка создания платежа</b>\n\n<i>{escape_html(str(e))}</i>'
             f'\n\nПопробуйте другой способ оплаты.',
-            reply_markup=home_only_kb()
+            reply_markup=home_only_kb(),
         )
 
     await callback.answer()
@@ -432,6 +454,7 @@ async def check_qr_payment_flow(
     pending_hint: str = None,
     callback: CallbackQuery = None,
     referral_override_func=None,
+    live_screen: bool = False,
 ) -> None:
     """
     Универсальный flow проверки статуса QR-платежа.
@@ -454,6 +477,7 @@ async def check_qr_payment_flow(
         callback: CallbackQuery (None при deep-link вызове)
         referral_override_func: Функция(order, state) -> int для нестандартного
                                 расчёта реферального вознаграждения (yookassa с балансом)
+        live_screen: True, если финальные статусы должны участвовать в live-screen UX
     """
     import time
     from database.requests import (
@@ -462,12 +486,30 @@ async def check_qr_payment_flow(
     )
     from bot.services.billing import complete_payment_flow
     from bot.keyboards.admin import home_only_kb
+    from bot.services.live_screen import show_live_screen
+
+    async def _show_status(text: str, *, reply_markup=None, force_new: bool = True) -> None:
+        if live_screen:
+            await show_live_screen(
+                callback or message,
+                text,
+                reply_markup=reply_markup,
+                screen_key=f'{payment_type}_status',
+                force_new=True,
+            )
+        else:
+            await safe_edit_or_send(
+                message,
+                text,
+                reply_markup=reply_markup,
+                force_new=force_new,
+            )
 
     async def _show_order_not_found() -> None:
         if callback:
             await callback.answer('❌ Ордер не найден', show_alert=True)
         else:
-            await safe_edit_or_send(message, '❌ Ордер не найден', reply_markup=home_only_kb())
+            await _show_status('❌ Ордер не найден', reply_markup=home_only_kb(), force_new=False)
 
     # 1. Поиск ордера
     order = find_order_by_order_id(order_id)
@@ -502,10 +544,10 @@ async def check_qr_payment_flow(
         if callback:
             await callback.answer('⚠️ Нет данных о платеже. Попробуйте чуть позже.', show_alert=True)
         else:
-            await safe_edit_or_send(
-                message,
+            await _show_status(
                 '⚠️ Нет данных о платеже. Попробуйте чуть позже.',
-                reply_markup=home_only_kb()
+                reply_markup=home_only_kb(),
+                force_new=False,
             )
         return
 
@@ -536,10 +578,10 @@ async def check_qr_payment_flow(
         status = await check_func(check_arg)
     except Exception as e:
         logger.error(f'Ошибка проверки статуса {payment_type} {order_id}: {e}')
-        await safe_edit_or_send(
-            message,
+        await _show_status(
             '❌ Не удалось проверить статус платежа. Попробуйте позже.',
-            reply_markup=home_only_kb(), force_new=True
+            reply_markup=home_only_kb(),
+            force_new=True,
         )
         return
 
@@ -572,13 +614,20 @@ async def check_qr_payment_flow(
             referral_amount=referral_amount
         )
     elif status == 'canceled':
-        await safe_edit_or_send(
-            message,
+        await _show_status(
             '❌ <b>Платёж отменён</b>\n\nПохоже, платёж был отменён.\nПопробуйте снова выбрать тариф.',
-            reply_markup=home_only_kb(), force_new=True
+            reply_markup=home_only_kb(),
+            force_new=True,
         )
     else:
-        pending_text = '⏳ <b>Платёж ещё не поступил</b>\n\nОплатите по ссылке и нажмите «✅ Я оплатил» снова.'
+        pending_text = '⏳ Платёж ещё не поступил. Оплатите по ссылке и нажмите «✅ Я оплатил» снова.'
         if pending_hint:
-            pending_text += f'\n\n<i>{pending_hint}</i>'
-        await safe_edit_or_send(message, pending_text, force_new=True)
+            pending_text += f'\n\n{pending_hint}'
+        if live_screen and callback:
+            await callback.answer(pending_text, show_alert=True)
+            return
+
+        pending_message_text = '⏳ <b>Платёж ещё не поступил</b>\n\nОплатите по ссылке и нажмите «✅ Я оплатил» снова.'
+        if pending_hint:
+            pending_message_text += f'\n\n<i>{pending_hint}</i>'
+        await _show_status(pending_message_text, force_new=True)
