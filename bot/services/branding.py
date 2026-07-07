@@ -30,19 +30,6 @@ HIDDIFY_RELEASES_URL = "https://github.com/hiddify/hiddify-app/releases"
 V2RAYNG_RELEASES_URL = "https://github.com/2dust/v2rayNG/releases"
 APP_STORE_REGION_GUIDE_URL = "https://telegra.ph/Kak-izmenit-region-App-Store-dlya-ustanovki-VPN-klientov-07-01-5"
 
-# Pages whose text/buttons/media are product-critical and should always follow
-# branding.py rather than stale admin-customized DB values.
-FORCE_REFRESH_PAGES = {
-    "main",
-    "documents",
-    "help",
-    "download_clients",
-    "download_ios",
-    "download_android",
-    "download_windows",
-    "download_macos",
-}
-
 MAIN_TEXT = (
     "🌊 <b>WaveMesh VPN</b>\n\n"
     "Спокойный и надёжный VPN-доступ для телефона, компьютера и планшета.\n\n"
@@ -243,8 +230,6 @@ def _update_page(
     media_type: str | None = None,
 ) -> None:
     with get_db() as conn:
-        force_refresh = page_key in FORCE_REFRESH_PAGES
-
         if buttons is None:
             existing = conn.execute(
                 "SELECT buttons_default FROM pages WHERE page_key = ?",
@@ -282,9 +267,8 @@ def _update_page(
         current_buttons_default = row["buttons_default"] if row else buttons_to_insert
         next_buttons = buttons if buttons is not None else current_buttons_default
 
-        update_custom_text = force_refresh or _needs_replacement(text_custom)
-        update_custom_buttons = buttons is not None and (force_refresh or _needs_replacement(buttons_custom))
-        update_custom_image = force_refresh
+        update_custom_text = _needs_replacement(text_custom)
+        update_custom_buttons = buttons is not None and _needs_replacement(buttons_custom)
 
         conn.execute(
             """
@@ -295,8 +279,6 @@ def _update_page(
                 media_type_default = ?,
                 text_custom = CASE WHEN ? THEN ? ELSE text_custom END,
                 buttons_custom = CASE WHEN ? THEN ? ELSE buttons_custom END,
-                image_custom = CASE WHEN ? THEN ? ELSE image_custom END,
-                media_type_custom = CASE WHEN ? THEN ? ELSE media_type_custom END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE page_key = ?
             """,
@@ -309,10 +291,6 @@ def _update_page(
                 text,
                 1 if update_custom_buttons else 0,
                 next_buttons,
-                1 if update_custom_image else 0,
-                image,
-                1 if update_custom_image else 0,
-                media_type,
                 page_key,
             ),
         )
