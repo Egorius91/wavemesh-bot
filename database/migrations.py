@@ -34,7 +34,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 INITIAL_VERSION = 21
 
 # Текущая версия схемы БД (инкрементируется при добавлении новых миграций)
-LATEST_VERSION = 41
+LATEST_VERSION = 42
 
 
 def _my_keys_item_template() -> str:
@@ -111,6 +111,23 @@ def _empty_page_buttons() -> str:
 
 def _home_only_page_buttons() -> str:
     """Дефолтная кнопка возврата на главную."""
+    return json.dumps([
+        {"id": "btn_back_main", "label": "🈴 На главную", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_back_main"},
+    ], ensure_ascii=False)
+
+
+def _documents_page_text() -> str:
+    """Дефолт страницы документов."""
+    return (
+        "📄 <b>Документы</b>\n\n"
+        "Здесь размещаются документы сервиса: оферта, политика конфиденциальности, "
+        "условия оплаты и правила использования VPN.\n\n"
+        "Администратор может изменить этот текст и добавить изображение через редактор /yaa."
+    )
+
+
+def _documents_page_buttons() -> str:
+    """Дефолтные кнопки страницы документов."""
     return json.dumps([
         {"id": "btn_back_main", "label": "🈴 На главную", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_back_main"},
     ], ensure_ascii=False)
@@ -635,6 +652,10 @@ def migration_initial(conn: sqlite3.Connection) -> None:
                 {"id": "btn_support",   "label": "💬 Поддержка",  "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": "https://t.me/plushkin_chat"},
                 {"id": "btn_back_main", "label": "🈴 На главную", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_back_main"},
             ], ensure_ascii=False),
+        },
+        'documents': {
+            'text': _documents_page_text(),
+            'buttons': _documents_page_buttons(),
         },
         'trial': {
             'text': (
@@ -1425,6 +1446,30 @@ def migration_41(conn):
     logger.info(f"Миграция v41 применена: обновлено стандартных labels Platega: {changed}")
 
 
+def migration_42(conn):
+    """Миграция v42: страница документов доступна через pages и /yaa."""
+    text_default = _documents_page_text()
+    buttons_default = _documents_page_buttons()
+
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO pages (page_key, text_default, buttons_default)
+        VALUES ('documents', ?, ?)
+        """,
+        (text_default, buttons_default),
+    )
+    conn.execute(
+        """
+        UPDATE pages
+        SET text_default = ?,
+            buttons_default = ?
+        WHERE page_key = 'documents'
+        """,
+        (text_default, buttons_default),
+    )
+    logger.info("Миграция v42 применена: добавлена редактируемая страница documents")
+
+
 MIGRATIONS = {
     22: migration_22,
     23: migration_23,
@@ -1446,6 +1491,7 @@ MIGRATIONS = {
     39: migration_39,
     40: migration_40,
     41: migration_41,
+    42: migration_42,
 }
 
 

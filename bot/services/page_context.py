@@ -16,6 +16,7 @@ from aiogram.types import InlineKeyboardButton, Message
 SUPPORTED_YAA_PAGE_KEYS = frozenset({
     'main',
     'help',
+    'documents',
     'trial',
     'prepayment',
     'renew_payment',

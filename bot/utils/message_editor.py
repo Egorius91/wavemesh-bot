@@ -28,6 +28,7 @@ ALL_MEDIA_TYPES = ['text', 'photo', 'video', 'animation']
 PAGE_KEYS = (
     'main',
     'help',
+    'documents',
     'trial',
     'prepayment',
     'renew_payment',
