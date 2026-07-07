@@ -486,7 +486,7 @@ async def check_qr_payment_flow(
     )
     from bot.services.billing import complete_payment_flow
     from bot.keyboards.admin import home_only_kb
-    from bot.services.live_screen import show_live_screen
+    from bot.services.live_screen import clear_live_screen_message, show_live_screen
 
     async def _show_status(text: str, *, reply_markup=None, force_new: bool = True) -> None:
         if live_screen:
@@ -600,11 +600,15 @@ async def check_qr_payment_flow(
 
         logger.info(f"{payment_type} referral: order={order_id}, referral_amount={referral_amount}")
 
-        # Удаляем QR-фото
-        try:
-            await message.delete()
-        except Exception:
-            pass
+        # Удаляем QR-фото. При возврате из платёжной формы message уже не QR-сообщение,
+        # поэтому удаляем сохранённый live-screen отдельно.
+        if live_screen:
+            await clear_live_screen_message(callback or message, delete_message=True)
+        else:
+            try:
+                await message.delete()
+            except Exception:
+                pass
 
         await complete_payment_flow(
             order_id=order_id,

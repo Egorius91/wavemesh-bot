@@ -390,6 +390,7 @@ async def _finalize_recurring_yookassa_payment(message, state, order_id: str, te
         get_active_subscription_by_key,
     )
     from bot.services.billing import complete_payment_flow
+    from bot.services.live_screen import clear_live_screen_message
     from bot.keyboards.admin import home_only_kb
 
     order = find_order_by_order_id(order_id)
@@ -427,10 +428,7 @@ async def _finalize_recurring_yookassa_payment(message, state, order_id: str, te
     tariff = get_tariff_by_id(order.get('tariff_id'))
     referral_amount = await _yookassa_referral_amount(order, state)
 
-    try:
-        await message.delete()
-    except Exception:
-        pass
+    await clear_live_screen_message(callback or message, delete_message=True)
 
     await complete_payment_flow(
         order_id=order_id,
