@@ -534,7 +534,7 @@ def key_manage_kb(key_id: int, is_unconfigured: bool = False, is_active: bool = 
         has_sub_id: True, если у ключа есть sub_id (показывает «📋 Показать подписку»)
         include_navigation: Добавлять ли нижний ряд «Мои ключи»/«На главную»
     """
-    show_label = "📋 Показать подписку" if has_sub_id else "📋 Показать ключ"
+    show_label = "Показать подписку" if has_sub_id else "Показать ключ"
     builder = InlineKeyboardBuilder()
 
     if not is_active:
@@ -568,7 +568,13 @@ def key_manage_kb(key_id: int, is_unconfigured: bool = False, is_active: bool = 
     else:
         # Стандартные кнопки активного ключа
         builder.row(
-            InlineKeyboardButton(text=show_label, callback_data=f"key_show:{key_id}"),
+            InlineKeyboardButton(
+                text=show_label,
+                callback_data=f"key_show:{key_id}",
+                style="primary",
+            )
+        )
+        builder.row(
             InlineKeyboardButton(text="📈 Продлить", callback_data=f"key_renew:{key_id}")
         )
         
