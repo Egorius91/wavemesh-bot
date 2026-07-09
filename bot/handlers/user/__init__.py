@@ -4,6 +4,7 @@ from .start import router as start_router
 from .keys import router as keys_router
 from .trial import router as trial_router
 from .tariffs import router as tariffs_router
+from .onboarding import router as onboarding_router
 
 # These are packages/modules that were explicitly standalone
 from .referral import router as referral_router
@@ -17,6 +18,7 @@ router.callback_query.outer_middleware(ResetAdminPageContextMiddleware())
 # Порядок важен: специфичные роутеры с deep_link должны идти перед общим start_router
 router.include_router(payments_router)
 router.include_router(referral_router)
+router.include_router(onboarding_router)
 router.include_router(start_router)
 router.include_router(keys_router)
 router.include_router(trial_router)

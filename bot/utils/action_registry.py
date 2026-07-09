@@ -269,6 +269,72 @@ def _resolve_renew_pay_balance(ctx: dict) -> Optional[dict]:
     return {"callback_data": f"renew_use_balance:{key_id}"}
 
 
+def _onboarding_key_id(ctx: dict) -> Optional[str]:
+    key_id = ctx.get('key_id')
+    if key_id is None or key_id == '':
+        return None
+    return str(key_id)
+
+
+def _onboarding_platform(ctx: dict) -> Optional[str]:
+    platform = str(ctx.get('platform') or '').lower()
+    return platform if platform in {'ios', 'android', 'windows', 'macos'} else None
+
+
+def _onboarding_platform_button(platform: str) -> Callable[[dict], Optional[dict]]:
+    def resolve(ctx: dict) -> Optional[dict]:
+        key_id = _onboarding_key_id(ctx)
+        if not key_id:
+            return None
+        return {'callback_data': f'onboarding_platform:{platform}:{key_id}'}
+
+    return resolve
+
+
+def _onboarding_continue_button(platform: str) -> Callable[[dict], Optional[dict]]:
+    def resolve(ctx: dict) -> Optional[dict]:
+        key_id = _onboarding_key_id(ctx)
+        if not key_id:
+            return None
+        return {'callback_data': f'onboarding_connection:{platform}:{key_id}'}
+
+    return resolve
+
+
+def _resolve_onboarding_advanced(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    return {'callback_data': f'onboarding_advanced:{key_id}'} if key_id else None
+
+
+def _resolve_onboarding_back(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    return {'callback_data': f'onboarding_ready:{key_id}'} if key_id else None
+
+
+def _resolve_onboarding_retry_install(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    platform = _onboarding_platform(ctx)
+    if not key_id or not platform:
+        return None
+    return {'callback_data': f'onboarding_platform:{platform}:{key_id}'}
+
+
+def _resolve_onboarding_retry_connection(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    platform = _onboarding_platform(ctx)
+    if not key_id or not platform:
+        return None
+    return {'callback_data': f'onboarding_connection:{platform}:{key_id}'}
+
+
+def _resolve_onboarding_problem(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    platform = _onboarding_platform(ctx)
+    if not key_id or not platform:
+        return None
+    return {'callback_data': f'onboarding_help:{platform}:{key_id}'}
+
+
 SYSTEM_BUTTONS: Dict[str, Callable[[Dict[str, Any]], Optional[dict]]] = {
     "btn_pay_crypto": _resolve_pay_crypto,
     "btn_pay_stars": _resolve_pay_stars,
@@ -288,4 +354,17 @@ SYSTEM_BUTTONS: Dict[str, Callable[[Dict[str, Any]], Optional[dict]]] = {
     "btn_renew_pay_cardlink": _resolve_renew_pay_cardlink,
     "btn_renew_pay_demo": _resolve_renew_pay_demo,
     "btn_renew_pay_balance": _resolve_renew_pay_balance,
+    "btn_onboarding_ios": _onboarding_platform_button('ios'),
+    "btn_onboarding_android": _onboarding_platform_button('android'),
+    "btn_onboarding_windows": _onboarding_platform_button('windows'),
+    "btn_onboarding_macos": _onboarding_platform_button('macos'),
+    "btn_onboarding_continue_ios": _onboarding_continue_button('ios'),
+    "btn_onboarding_continue_android": _onboarding_continue_button('android'),
+    "btn_onboarding_continue_windows": _onboarding_continue_button('windows'),
+    "btn_onboarding_continue_macos": _onboarding_continue_button('macos'),
+    "btn_onboarding_advanced": _resolve_onboarding_advanced,
+    "btn_onboarding_back": _resolve_onboarding_back,
+    "btn_onboarding_retry_install": _resolve_onboarding_retry_install,
+    "btn_onboarding_retry_connection": _resolve_onboarding_retry_connection,
+    "btn_onboarding_problem": _resolve_onboarding_problem,
 }

@@ -1,0 +1,171 @@
+"""Пошаговое подключение нового VPN-ключа."""
+from __future__ import annotations
+
+from typing import Optional
+
+from aiogram import F, Router
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+router = Router()
+
+PLATFORM_PAGES = {
+    'ios': 'onboarding_ios',
+    'android': 'onboarding_android',
+    'windows': 'onboarding_windows',
+    'macos': 'onboarding_macos',
+}
+
+
+def _get_owned_key(key_id: int, telegram_id: int) -> Optional[dict]:
+    from database.requests import get_key_details_for_user
+
+    return get_key_details_for_user(key_id, telegram_id)
+
+
+async def _require_owned_key(callback: CallbackQuery, key_id: int) -> Optional[dict]:
+    key = _get_owned_key(key_id, callback.from_user.id)
+    if key:
+        return key
+
+    await callback.answer('Ключ не найден', show_alert=True)
+    return None
+
+
+async def start_key_onboarding(target, key_data: dict) -> None:
+    """Открывает мастер сразу после создания нового ключа."""
+    from bot.utils.page_renderer import render_page
+
+    await render_page(
+        target,
+        page_key='onboarding_ready',
+        context={'key_id': key_data['id']},
+    )
+
+
+def onboarding_connection_kb(key_id: int, platform: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text='✅ VPN включён',
+            callback_data=f'onboarding_done:{platform}:{key_id}',
+            style='success',
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text='🧰 Не получается',
+            callback_data=f'onboarding_help:{platform}:{key_id}',
+        ),
+        InlineKeyboardButton(
+            text='🛠 Показать технические данные',
+            callback_data=f'onboarding_advanced:{key_id}',
+        ),
+    )
+    return builder.as_markup()
+
+
+@router.callback_query(F.data.startswith('onboarding_ready:'))
+async def onboarding_ready_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    key_id = int(callback.data.rsplit(':', 1)[1])
+    if not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key='onboarding_ready',
+        context={'key_id': key_id},
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_platform:'))
+async def onboarding_platform_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, platform, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    page_key = PLATFORM_PAGES.get(platform)
+    if not page_key or not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key=page_key,
+        context={'key_id': key_id, 'platform': platform},
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_connection:'))
+async def onboarding_connection_handler(callback: CallbackQuery):
+    from bot.services.branding import ONBOARDING_CONNECTION_TEXT
+    from bot.utils.key_sender import send_key_with_qr
+
+    _, platform, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    key = await _require_owned_key(callback, key_id)
+    if not key or platform not in PLATFORM_PAGES:
+        return
+
+    await callback.answer()
+    await send_key_with_qr(
+        callback,
+        key,
+        onboarding_connection_kb(key_id, platform),
+        is_new=False,
+        page_key='onboarding_connection',
+        fallback_text=ONBOARDING_CONNECTION_TEXT,
+        use_page_markup=False,
+        onboarding_platform=platform,
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_advanced:'))
+async def onboarding_advanced_handler(callback: CallbackQuery):
+    from bot.keyboards.user import key_issued_kb
+    from bot.utils.key_sender import send_key_with_qr
+
+    key_id = int(callback.data.rsplit(':', 1)[1])
+    key = await _require_owned_key(callback, key_id)
+    if not key:
+        return
+
+    await callback.answer()
+    await send_key_with_qr(callback, key, key_issued_kb(), is_new=False)
+
+
+@router.callback_query(F.data.startswith('onboarding_help:'))
+async def onboarding_help_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, platform, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    if platform not in PLATFORM_PAGES or not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key='onboarding_troubleshoot',
+        context={'key_id': key_id, 'platform': platform},
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_done:'))
+async def onboarding_done_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, platform, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    if platform not in PLATFORM_PAGES or not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key='onboarding_success',
+        context={'key_id': key_id, 'platform': platform},
+    )

@@ -20,6 +20,9 @@ KEY_DELIVERY_CONTEXT_RAW = 'key_delivery_raw_value'
 KEY_DELIVERY_CONTEXT_KIND = 'key_delivery_kind'
 KEY_DELIVERY_CONTEXT_IS_NEW = 'key_delivery_is_new'
 KEY_DELIVERY_CONTEXT_ATTACH_MARKUP = 'key_delivery_attach_markup'
+KEY_DELIVERY_CONTEXT_USE_PAGE_MARKUP = 'key_delivery_use_page_markup'
+KEY_DELIVERY_CONTEXT_KEY_ID = 'key_delivery_key_id'
+KEY_DELIVERY_CONTEXT_PLATFORM = 'key_delivery_platform'
 
 
 # Дефолтный текст выдачи ключа в формате HTML
@@ -105,28 +108,54 @@ def _get_viewer_id(messageable) -> Optional[int]:
 
 def _get_key_delivery_markup(
     fallback_markup: Optional[InlineKeyboardMarkup],
+    page_key: str = KEY_DELIVERY_PAGE,
+    use_page_markup: bool = True,
 ) -> Optional[InlineKeyboardMarkup]:
     """Берёт клавиатуру страницы из БД, если она доступна, иначе использует fallback."""
+    if not use_page_markup:
+        return fallback_markup
+
     try:
         from bot.utils.page_renderer import build_page_keyboard
 
-        markup = build_page_keyboard(KEY_DELIVERY_PAGE)
+        markup = build_page_keyboard(page_key)
         return markup or fallback_markup
     except Exception as e:
         logger.warning("Не удалось собрать клавиатуру страницы выдачи ключа: %s", e)
         return fallback_markup
 
 
-def _build_key_delivery_caption(raw_value: str, is_new: bool, kind: str) -> str:
+def _build_key_delivery_caption(
+    raw_value: str,
+    is_new: bool,
+    kind: str,
+    page_key: str = KEY_DELIVERY_PAGE,
+    fallback_text: str = DEFAULT_KEY_DELIVERY_TEXT,
+) -> str:
     """Собирает caption выдачи ключа/подписки с учётом лимита Telegram."""
     from bot.utils.message_editor import get_message_data
 
-    delivery_data = get_message_data(KEY_DELIVERY_PAGE, DEFAULT_KEY_DELIVERY_TEXT)
-    base_caption = delivery_data.get('text', DEFAULT_KEY_DELIVERY_TEXT)
+    delivery_data = get_message_data(page_key, fallback_text)
+    base_caption = delivery_data.get('text', fallback_text)
     caption = build_key_delivery_text(base_caption, raw_value)
 
     if len(caption) <= 1024:
         return caption
+
+    if page_key == 'onboarding_connection':
+        compact = (
+            "🔗 <b>Добавьте подключение</b>\n\n"
+            f"{format_key_copy_value(raw_value)}\n\n"
+            "Откройте в OneXray меню <b>＋</b> и выберите <b>Read Clipboard</b> "
+            "или отсканируйте QR-код."
+        )
+        if len(compact) <= 1024:
+            return compact
+        return (
+            "🔗 <b>Добавьте подключение</b>\n\n"
+            "Ссылка слишком длинная для подписи Telegram. Отсканируйте QR-код "
+            "или используйте файл конфигурации, который бот отправит следом."
+        )
 
     if kind == 'subscription':
         title = "✅ <b>Ваша подписка!</b>" if is_new else "📋 <b>Ваша подписка</b>"
@@ -152,11 +181,19 @@ async def _render_key_delivery_photo(
     reply_markup: Optional[InlineKeyboardMarkup],
     is_new: bool,
     kind: str,
+    page_key: str,
+    fallback_text: str,
 ) -> Message:
     """Отправляет или редактирует QR-фото страницы выдачи ключа."""
     from bot.utils.text import safe_edit_or_send
 
-    caption = _build_key_delivery_caption(raw_value, is_new, kind)
+    caption = _build_key_delivery_caption(
+        raw_value,
+        is_new,
+        kind,
+        page_key=page_key,
+        fallback_text=fallback_text,
+    )
     filename = "subscription_qr.png" if kind == 'subscription' else "qrcode.png"
     photo = BufferedInputFile(generate_qr_code(raw_value), filename=filename)
 
@@ -175,6 +212,10 @@ def _remember_key_delivery_context(
     is_new: bool,
     kind: str,
     attach_markup: bool,
+    page_key: str,
+    use_page_markup: bool,
+    key_id: Optional[int],
+    platform: Optional[str],
 ) -> None:
     """Запоминает страницу выдачи ключа для контекстной команды /yaa."""
     if not viewer_id:
@@ -189,13 +230,16 @@ def _remember_key_delivery_context(
 
         remember_page_context(
             viewer_id,
-            page_key=KEY_DELIVERY_PAGE,
+            page_key=page_key,
             message=rendered_message,
             context={
                 KEY_DELIVERY_CONTEXT_RAW: raw_value,
                 KEY_DELIVERY_CONTEXT_KIND: kind,
                 KEY_DELIVERY_CONTEXT_IS_NEW: is_new,
                 KEY_DELIVERY_CONTEXT_ATTACH_MARKUP: attach_markup,
+                KEY_DELIVERY_CONTEXT_USE_PAGE_MARKUP: use_page_markup,
+                KEY_DELIVERY_CONTEXT_KEY_ID: key_id,
+                KEY_DELIVERY_CONTEXT_PLATFORM: platform,
             },
             text_replacements=build_key_delivery_replacements(raw_value),
         )
@@ -211,19 +255,33 @@ async def render_key_delivery_page(
     kind: str = 'key',
     attach_markup: bool = True,
     viewer_id: Optional[int] = None,
+    page_key: str = KEY_DELIVERY_PAGE,
+    fallback_text: str = DEFAULT_KEY_DELIVERY_TEXT,
+    use_page_markup: bool = True,
+    key_id: Optional[int] = None,
+    platform: Optional[str] = None,
 ) -> Message:
     """Рендерит специальную страницу выдачи ключа с QR и запоминает её для /yaa."""
     target_message = _get_target_message(messageable)
     if target_message is None:
         raise ValueError("Не удалось определить сообщение для выдачи ключа")
 
-    reply_markup = _get_key_delivery_markup(key_manage_markup) if attach_markup else None
+    reply_markup = (
+        _get_key_delivery_markup(
+            key_manage_markup,
+            page_key=page_key,
+            use_page_markup=use_page_markup,
+        )
+        if attach_markup else None
+    )
     rendered_message = await _render_key_delivery_photo(
         target_message=target_message,
         raw_value=raw_value,
         reply_markup=reply_markup,
         is_new=is_new,
         kind=kind,
+        page_key=page_key,
+        fallback_text=fallback_text,
     )
     _remember_key_delivery_context(
         viewer_id=viewer_id if viewer_id is not None else _get_viewer_id(messageable),
@@ -232,6 +290,10 @@ async def render_key_delivery_page(
         is_new=is_new,
         kind=kind,
         attach_markup=attach_markup,
+        page_key=page_key,
+        use_page_markup=use_page_markup,
+        key_id=key_id,
+        platform=platform,
     )
     return rendered_message
 
@@ -243,13 +305,34 @@ async def rerender_key_delivery_page_context(page_context, viewer_id: int) -> bo
     if not raw_value:
         return False
 
+    use_page_markup = bool(context.get(KEY_DELIVERY_CONTEXT_USE_PAGE_MARKUP, True))
+    key_id = context.get(KEY_DELIVERY_CONTEXT_KEY_ID)
+    platform = context.get(KEY_DELIVERY_CONTEXT_PLATFORM)
+    key_manage_markup = None
+    if not use_page_markup and key_id and platform:
+        from bot.handlers.user.onboarding import onboarding_connection_kb
+
+        key_manage_markup = onboarding_connection_kb(int(key_id), str(platform))
+
+    fallback_text = DEFAULT_KEY_DELIVERY_TEXT
+    if page_context.page_key == 'onboarding_connection':
+        from bot.services.branding import ONBOARDING_CONNECTION_TEXT
+
+        fallback_text = ONBOARDING_CONNECTION_TEXT
+
     await render_key_delivery_page(
         page_context.message,
         raw_value=raw_value,
+        key_manage_markup=key_manage_markup,
         is_new=bool(context.get(KEY_DELIVERY_CONTEXT_IS_NEW)),
         kind=context.get(KEY_DELIVERY_CONTEXT_KIND) or 'key',
         attach_markup=bool(context.get(KEY_DELIVERY_CONTEXT_ATTACH_MARKUP, True)),
         viewer_id=viewer_id,
+        page_key=page_context.page_key,
+        fallback_text=fallback_text,
+        use_page_markup=use_page_markup,
+        key_id=int(key_id) if key_id else None,
+        platform=str(platform) if platform else None,
     )
     return True
 
@@ -258,7 +341,11 @@ async def send_key_with_qr(
     messageable,
     key_data: dict,
     key_manage_markup: InlineKeyboardMarkup = None,
-    is_new: bool = False
+    is_new: bool = False,
+    page_key: str = KEY_DELIVERY_PAGE,
+    fallback_text: str = DEFAULT_KEY_DELIVERY_TEXT,
+    use_page_markup: bool = True,
+    onboarding_platform: Optional[str] = None,
 ):
     """
     Отправляет пользователю ключ с QR-кодом и файлом конфигурации.
@@ -300,6 +387,11 @@ async def send_key_with_qr(
                 is_new=is_new,
                 kind='subscription',
                 attach_markup=True,
+                page_key=page_key,
+                fallback_text=fallback_text,
+                use_page_markup=use_page_markup,
+                key_id=key_data.get('id'),
+                platform=onboarding_platform,
             )
             return
 
@@ -341,6 +433,11 @@ async def send_key_with_qr(
             is_new=is_new,
             kind='key',
             attach_markup=False,
+            page_key=page_key,
+            fallback_text=fallback_text,
+            use_page_markup=use_page_markup,
+            key_id=key_data.get('id'),
+            platform=onboarding_platform,
         )
 
         # 4. Отправляем JSON конфиг файлом

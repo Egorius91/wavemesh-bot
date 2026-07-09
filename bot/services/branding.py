@@ -29,6 +29,9 @@ HIDDIFY_URL = "https://hiddify.com/"
 HIDDIFY_RELEASES_URL = "https://github.com/hiddify/hiddify-app/releases"
 V2RAYNG_RELEASES_URL = "https://github.com/2dust/v2rayNG/releases"
 APP_STORE_REGION_GUIDE_URL = "https://telegra.ph/Kak-izmenit-region-App-Store-dlya-ustanovki-VPN-klientov-07-01-5"
+ONEXRAY_APP_STORE_URL = "https://apps.apple.com/us/app/onexray/id6745748773"
+ONEXRAY_GOOGLE_PLAY_URL = "https://play.google.com/store/apps/details?id=net.yuandev.onexray"
+ONEXRAY_INSTALL_URL = "https://onexray.com/docs/install/"
 
 MAIN_TEXT = (
     "🌊 <b>WaveMesh VPN</b>\n\n"
@@ -151,6 +154,125 @@ DOWNLOAD_MACOS_BUTTONS = json.dumps(
     ensure_ascii=False,
 )
 
+ONBOARDING_READY_TEXT = (
+    "✅ <b>Подключение готово</b>\n\n"
+    "Осталось установить приложение и добавить в него ваше подключение. "
+    "Обычно это занимает 2–3 минуты.\n\n"
+    "Выберите устройство:"
+)
+
+ONBOARDING_READY_BUTTONS = json.dumps(
+    [
+        {"id": "btn_onboarding_ios", "label": "🍎 iPhone / iPad", "color": "primary", "row": 0, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_android", "label": "🤖 Android", "color": "primary", "row": 0, "col": 1, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_windows", "label": "💻 Windows", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_macos", "label": "🖥 macOS", "color": "secondary", "row": 1, "col": 1, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_advanced", "label": "🛠 Для опытных пользователей", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_my_keys", "label": "🔑 Мои ключи", "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_my_keys"},
+    ],
+    ensure_ascii=False,
+)
+
+
+def _onboarding_platform_text(platform_name: str, install_hint: str) -> str:
+    return (
+        f"📱 <b>Шаг 1 из 3 · {platform_name}</b>\n\n"
+        "Установите <b>OneXray</b> — приложение для подключения WaveMesh VPN.\n\n"
+        f"{install_hint}\n\n"
+        "Когда приложение установится, вернитесь в бот и нажмите "
+        "«Приложение установлено»."
+    )
+
+
+def _onboarding_platform_buttons(
+    install_url: str,
+    continue_button_id: str,
+    alternate_action: str,
+) -> str:
+    return json.dumps(
+        [
+            {"id": "btn_onboarding_install", "label": "⬇️ Установить OneXray", "color": "primary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": install_url},
+            {"id": continue_button_id, "label": "✅ Приложение установлено", "color": "success", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+            {"id": "btn_onboarding_alternative", "label": "Другой вариант приложения", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": alternate_action},
+            {"id": "btn_onboarding_back", "label": "⬅️ Назад", "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        ],
+        ensure_ascii=False,
+    )
+
+
+ONBOARDING_IOS_TEXT = _onboarding_platform_text(
+    "iPhone / iPad",
+    "Кнопка ниже откроет официальную страницу OneXray в App Store.",
+)
+ONBOARDING_ANDROID_TEXT = _onboarding_platform_text(
+    "Android",
+    "Кнопка ниже откроет официальную страницу OneXray в Google Play.",
+)
+ONBOARDING_WINDOWS_TEXT = _onboarding_platform_text(
+    "Windows",
+    "Кнопка ниже откроет официальную инструкцию установки OneXray для Windows.",
+)
+ONBOARDING_MACOS_TEXT = _onboarding_platform_text(
+    "macOS",
+    "Кнопка ниже откроет официальную страницу OneXray в App Store.",
+)
+
+ONBOARDING_IOS_BUTTONS = _onboarding_platform_buttons(
+    ONEXRAY_APP_STORE_URL, "btn_onboarding_continue_ios", "cmd_download_ios"
+)
+ONBOARDING_ANDROID_BUTTONS = _onboarding_platform_buttons(
+    ONEXRAY_GOOGLE_PLAY_URL, "btn_onboarding_continue_android", "cmd_download_android"
+)
+ONBOARDING_WINDOWS_BUTTONS = _onboarding_platform_buttons(
+    ONEXRAY_INSTALL_URL, "btn_onboarding_continue_windows", "cmd_download_windows"
+)
+ONBOARDING_MACOS_BUTTONS = _onboarding_platform_buttons(
+    ONEXRAY_APP_STORE_URL, "btn_onboarding_continue_macos", "cmd_download_macos"
+)
+
+ONBOARDING_CONNECTION_TEXT = (
+    "🔗 <b>Шаг 2 из 3 · Добавьте подключение</b>\n\n"
+    "1. Нажмите на ссылку ниже, чтобы скопировать её:\n"
+    "%ключ%\n\n"
+    "2. Откройте OneXray и нажмите <b>＋</b> на главном экране.\n"
+    "3. Выберите <b>Read Clipboard</b>. Либо откройте сканер QR-кода "
+    "и отсканируйте изображение выше.\n\n"
+    "После добавления выберите подключение и включите VPN."
+)
+
+ONBOARDING_TROUBLESHOOT_TEXT = (
+    "🧰 <b>Что именно не получилось?</b>\n\n"
+    "Выберите ближайший вариант — бот вернёт вас к нужному шагу.\n\n"
+    "Если подключение добавилось, но сайты не открываются, сначала выключите VPN, "
+    "смените Wi‑Fi на мобильную сеть или наоборот и включите VPN снова."
+)
+
+ONBOARDING_TROUBLESHOOT_BUTTONS = json.dumps(
+    [
+        {"id": "btn_onboarding_retry_install", "label": "Не установилось приложение", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_retry_connection", "label": "Не добавилось подключение", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_support", "label": "💬 Написать в поддержку", "color": "primary", "row": 2, "col": 0, "is_hidden": False, "action_type": "url", "action_value": SUPPORT_URL},
+        {"id": "btn_my_keys", "label": "🔑 Мои ключи", "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_my_keys"},
+    ],
+    ensure_ascii=False,
+)
+
+ONBOARDING_SUCCESS_TEXT = (
+    "🎉 <b>Готово!</b>\n\n"
+    "Подключение добавлено. Откройте OneXray, выберите его на главном экране "
+    "и включите VPN.\n\n"
+    "Если сайты открываются — настройка завершена."
+)
+
+ONBOARDING_SUCCESS_BUTTONS = json.dumps(
+    [
+        {"id": "btn_onboarding_problem", "label": "🧰 Не работает", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_my_keys", "label": "🔑 Мои ключи", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_my_keys"},
+        {"id": "btn_back_main", "label": "🏠 На главную", "color": "secondary", "row": 1, "col": 1, "is_hidden": False, "action_type": "internal", "action_value": "cmd_back_main"},
+    ],
+    ensure_ascii=False,
+)
+
 DOCUMENTS_TEXT = (
     "📄 <b>Документы WaveMesh VPN</b>\n\n"
     "Перед использованием сервиса рекомендуем ознакомиться с основными документами.\n\n"
@@ -200,6 +322,14 @@ PAGE_DEFAULTS = {
     "download_android": (DOWNLOAD_ANDROID_TEXT, DOWNLOAD_ANDROID_BUTTONS, None, None),
     "download_windows": (DOWNLOAD_WINDOWS_TEXT, DOWNLOAD_WINDOWS_BUTTONS, None, None),
     "download_macos": (DOWNLOAD_MACOS_TEXT, DOWNLOAD_MACOS_BUTTONS, None, None),
+    "onboarding_ready": (ONBOARDING_READY_TEXT, ONBOARDING_READY_BUTTONS, None, None),
+    "onboarding_ios": (ONBOARDING_IOS_TEXT, ONBOARDING_IOS_BUTTONS, None, None),
+    "onboarding_android": (ONBOARDING_ANDROID_TEXT, ONBOARDING_ANDROID_BUTTONS, None, None),
+    "onboarding_windows": (ONBOARDING_WINDOWS_TEXT, ONBOARDING_WINDOWS_BUTTONS, None, None),
+    "onboarding_macos": (ONBOARDING_MACOS_TEXT, ONBOARDING_MACOS_BUTTONS, None, None),
+    "onboarding_connection": (ONBOARDING_CONNECTION_TEXT, None, None, None),
+    "onboarding_troubleshoot": (ONBOARDING_TROUBLESHOOT_TEXT, ONBOARDING_TROUBLESHOOT_BUTTONS, None, None),
+    "onboarding_success": (ONBOARDING_SUCCESS_TEXT, ONBOARDING_SUCCESS_BUTTONS, None, None),
     "documents": (DOCUMENTS_TEXT, DOCUMENTS_BUTTONS, None, None),
     "prepayment": (PREPAYMENT_TEXT, None, None, None),
     "trial": (TRIAL_TEXT, None, None, None),

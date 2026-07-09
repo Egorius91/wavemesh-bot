@@ -100,8 +100,6 @@ async def process_new_key_subscription_final(callback: CallbackQuery, state: FSM
     )
     from bot.services.vpn_api import get_client
     from bot.handlers.admin.users_keys import generate_unique_email
-    from bot.utils.key_sender import send_key_with_qr
-    from bot.keyboards.user import key_issued_kb
 
     data = await state.get_data()
     order_id = data.get('new_key_order_id')
@@ -189,7 +187,8 @@ async def process_new_key_subscription_final(callback: CallbackQuery, state: FSM
 
         await state.clear()
         new_key = get_key_details_for_user(key_id, telegram_id)
-        await send_key_with_qr(callback, new_key, key_issued_kb(), is_new=True)
+        from bot.handlers.user.onboarding import start_key_onboarding
+        await start_key_onboarding(callback, new_key)
     except Exception as e:
         logger.error(f'Ошибка настройки subscription-ключа (id={key_id}): {e}')
         await safe_edit_or_send(callback.message,
@@ -209,8 +208,6 @@ async def process_new_key_final(callback: CallbackQuery, state: FSMContext, serv
     from database.requests import get_server_by_id, update_vpn_key_config, update_payment_key_id, find_order_by_order_id, get_user_internal_id, get_key_details_for_user, create_initial_vpn_key
     from bot.services.vpn_api import get_client
     from bot.handlers.admin.users_keys import generate_unique_email
-    from bot.utils.key_sender import send_key_with_qr
-    from bot.keyboards.user import key_issued_kb
     data = await state.get_data()
     order_id = data.get('new_key_order_id')
     key_id = data.get('new_key_id')
@@ -253,7 +250,8 @@ async def process_new_key_final(callback: CallbackQuery, state: FSMContext, serv
         update_payment_key_id(order_id, key_id)
         await state.clear()
         new_key = get_key_details_for_user(key_id, telegram_id)
-        await send_key_with_qr(callback, new_key, key_issued_kb(), is_new=True)
+        from bot.handlers.user.onboarding import start_key_onboarding
+        await start_key_onboarding(callback, new_key)
     except Exception as e:
         logger.error(f'Ошибка настройки ключа (id={key_id}): {e}')
         await safe_edit_or_send(callback.message, f'❌ Ошибка настройки ключа: {escape_html(str(e))}\nОбратитесь в поддержку, указав Order ID: ' + str(order_id))
