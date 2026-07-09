@@ -16,6 +16,13 @@ PLATFORM_PAGES = {
     'macos': 'onboarding_macos',
 }
 
+ALTERNATIVE_DOWNLOAD_PAGES = {
+    'ios': 'download_ios',
+    'android': 'download_android',
+    'windows': 'download_windows',
+    'macos': 'download_macos',
+}
+
 
 def _get_owned_key(key_id: int, telegram_id: int) -> Optional[dict]:
     from database.requests import get_key_details_for_user
@@ -120,6 +127,47 @@ async def onboarding_connection_handler(callback: CallbackQuery):
         fallback_text=ONBOARDING_CONNECTION_TEXT,
         use_page_markup=False,
         onboarding_platform=platform,
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_alt:'))
+async def onboarding_alternative_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, platform, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    page_key = ALTERNATIVE_DOWNLOAD_PAGES.get(platform)
+    if not page_key or not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key=page_key,
+        visibility={
+            'btn_back_downloads': False,
+            'btn_back_main': False,
+        },
+        context={'key_id': key_id, 'platform': platform},
+        append_buttons=[
+            [
+                InlineKeyboardButton(
+                    text='✅ Приложение установлено',
+                    callback_data=f'onboarding_connection:{platform}:{key_id}',
+                    style='success',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text='⬅️ Назад',
+                    callback_data=f'onboarding_platform:{platform}:{key_id}',
+                ),
+                InlineKeyboardButton(
+                    text='🏠 На главную',
+                    callback_data='start',
+                ),
+            ],
+        ],
     )
 
 

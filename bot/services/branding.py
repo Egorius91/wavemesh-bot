@@ -187,13 +187,13 @@ def _onboarding_platform_text(platform_name: str, install_hint: str) -> str:
 def _onboarding_platform_buttons(
     install_url: str,
     continue_button_id: str,
-    alternate_action: str,
+    alternate_button_id: str,
 ) -> str:
     return json.dumps(
         [
             {"id": "btn_onboarding_install", "label": "⬇️ Установить OneXray", "color": "primary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": install_url},
             {"id": continue_button_id, "label": "✅ Приложение установлено", "color": "success", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
-            {"id": "btn_onboarding_alternative", "label": "Другой вариант приложения", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": alternate_action},
+            {"id": alternate_button_id, "label": "Другой вариант приложения", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
             {"id": "btn_onboarding_back", "label": "⬅️ Назад", "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
         ],
         ensure_ascii=False,
@@ -218,16 +218,16 @@ ONBOARDING_MACOS_TEXT = _onboarding_platform_text(
 )
 
 ONBOARDING_IOS_BUTTONS = _onboarding_platform_buttons(
-    ONEXRAY_APP_STORE_URL, "btn_onboarding_continue_ios", "cmd_download_ios"
+    ONEXRAY_APP_STORE_URL, "btn_onboarding_continue_ios", "btn_onboarding_alt_ios"
 )
 ONBOARDING_ANDROID_BUTTONS = _onboarding_platform_buttons(
-    ONEXRAY_GOOGLE_PLAY_URL, "btn_onboarding_continue_android", "cmd_download_android"
+    ONEXRAY_GOOGLE_PLAY_URL, "btn_onboarding_continue_android", "btn_onboarding_alt_android"
 )
 ONBOARDING_WINDOWS_BUTTONS = _onboarding_platform_buttons(
-    ONEXRAY_INSTALL_URL, "btn_onboarding_continue_windows", "cmd_download_windows"
+    ONEXRAY_INSTALL_URL, "btn_onboarding_continue_windows", "btn_onboarding_alt_windows"
 )
 ONBOARDING_MACOS_BUTTONS = _onboarding_platform_buttons(
-    ONEXRAY_APP_STORE_URL, "btn_onboarding_continue_macos", "cmd_download_macos"
+    ONEXRAY_APP_STORE_URL, "btn_onboarding_continue_macos", "btn_onboarding_alt_macos"
 )
 
 ONBOARDING_CONNECTION_TEXT = (
@@ -352,6 +352,42 @@ def _needs_replacement(value: str | None) -> bool:
     return any(marker in value for marker in LEGACY_MARKERS)
 
 
+ONBOARDING_ALT_BUTTON_IDS = {
+    "onboarding_ios": "btn_onboarding_alt_ios",
+    "onboarding_android": "btn_onboarding_alt_android",
+    "onboarding_windows": "btn_onboarding_alt_windows",
+    "onboarding_macos": "btn_onboarding_alt_macos",
+}
+
+
+def _migrate_onboarding_alt_button(page_key: str, buttons_json: str | None) -> str | None:
+    """Move old onboarding alternative buttons out of the global download flow."""
+    new_button_id = ONBOARDING_ALT_BUTTON_IDS.get(page_key)
+    if not new_button_id or not buttons_json:
+        return buttons_json
+
+    try:
+        buttons = json.loads(buttons_json)
+    except (TypeError, json.JSONDecodeError):
+        return buttons_json
+
+    changed = False
+    for button in buttons if isinstance(buttons, list) else []:
+        if not isinstance(button, dict):
+            continue
+        if button.get("id") != "btn_onboarding_alternative":
+            continue
+
+        button["id"] = new_button_id
+        button["action_type"] = "system"
+        button["action_value"] = None
+        changed = True
+
+    if not changed:
+        return buttons_json
+    return json.dumps(buttons, ensure_ascii=False)
+
+
 def _update_page(
     page_key: str,
     text: str,
@@ -396,9 +432,16 @@ def _update_page(
         buttons_custom = row["buttons_custom"] if row else None
         current_buttons_default = row["buttons_default"] if row else buttons_to_insert
         next_buttons = buttons if buttons is not None else current_buttons_default
+        next_buttons_custom = _migrate_onboarding_alt_button(page_key, buttons_custom)
 
         update_custom_text = _needs_replacement(text_custom)
-        update_custom_buttons = buttons is not None and _needs_replacement(buttons_custom)
+        update_custom_buttons = (
+            buttons is not None
+            and (
+                _needs_replacement(buttons_custom)
+                or next_buttons_custom != buttons_custom
+            )
+        )
 
         conn.execute(
             """
@@ -420,7 +463,7 @@ def _update_page(
                 1 if update_custom_text else 0,
                 text,
                 1 if update_custom_buttons else 0,
-                next_buttons,
+                next_buttons_custom if next_buttons_custom != buttons_custom else next_buttons,
                 page_key,
             ),
         )

@@ -301,6 +301,16 @@ def _onboarding_continue_button(platform: str) -> Callable[[dict], Optional[dict
     return resolve
 
 
+def _onboarding_alternative_button(platform: str) -> Callable[[dict], Optional[dict]]:
+    def resolve(ctx: dict) -> Optional[dict]:
+        key_id = _onboarding_key_id(ctx)
+        if not key_id:
+            return None
+        return {'callback_data': f'onboarding_alt:{platform}:{key_id}'}
+
+    return resolve
+
+
 def _resolve_onboarding_advanced(ctx: dict) -> Optional[dict]:
     key_id = _onboarding_key_id(ctx)
     return {'callback_data': f'onboarding_advanced:{key_id}'} if key_id else None
@@ -362,6 +372,10 @@ SYSTEM_BUTTONS: Dict[str, Callable[[Dict[str, Any]], Optional[dict]]] = {
     "btn_onboarding_continue_android": _onboarding_continue_button('android'),
     "btn_onboarding_continue_windows": _onboarding_continue_button('windows'),
     "btn_onboarding_continue_macos": _onboarding_continue_button('macos'),
+    "btn_onboarding_alt_ios": _onboarding_alternative_button('ios'),
+    "btn_onboarding_alt_android": _onboarding_alternative_button('android'),
+    "btn_onboarding_alt_windows": _onboarding_alternative_button('windows'),
+    "btn_onboarding_alt_macos": _onboarding_alternative_button('macos'),
     "btn_onboarding_advanced": _resolve_onboarding_advanced,
     "btn_onboarding_back": _resolve_onboarding_back,
     "btn_onboarding_retry_install": _resolve_onboarding_retry_install,
