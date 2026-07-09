@@ -63,11 +63,7 @@ def onboarding_connection_kb(key_id: int, platform: str) -> InlineKeyboardMarkup
         InlineKeyboardButton(
             text='🧰 Не получается',
             callback_data=f'onboarding_help:{platform}:{key_id}',
-        ),
-        InlineKeyboardButton(
-            text='🛠 Показать технические данные',
-            callback_data=f'onboarding_advanced:{key_id}',
-        ),
+        )
     )
     return builder.as_markup()
 
