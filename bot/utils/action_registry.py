@@ -352,6 +352,30 @@ def _resolve_onboarding_problem(ctx: dict) -> Optional[dict]:
     return {'callback_data': f'onboarding_help:{platform}:{key_id}'}
 
 
+def _onboarding_issue_button(issue: str) -> Callable[[dict], Optional[dict]]:
+    def resolve(ctx: dict) -> Optional[dict]:
+        key_id = _onboarding_key_id(ctx)
+        platform = _onboarding_platform(ctx)
+        if not key_id or not platform:
+            return None
+        variant = 'alt' if ctx.get('connection_variant') == 'alternative' else 'primary'
+        return {
+            'callback_data': f'onboarding_issue:{issue}:{variant}:{platform}:{key_id}'
+        }
+
+    return resolve
+
+
+def _resolve_onboarding_troubleshoot_back(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    platform = _onboarding_platform(ctx)
+    if not key_id or not platform:
+        return None
+    if ctx.get('connection_variant') == 'alternative':
+        return {'callback_data': f'onboarding_help_alt:{platform}:{key_id}'}
+    return {'callback_data': f'onboarding_help:{platform}:{key_id}'}
+
+
 SYSTEM_BUTTONS: Dict[str, Callable[[Dict[str, Any]], Optional[dict]]] = {
     "btn_pay_crypto": _resolve_pay_crypto,
     "btn_pay_stars": _resolve_pay_stars,
@@ -388,4 +412,9 @@ SYSTEM_BUTTONS: Dict[str, Callable[[Dict[str, Any]], Optional[dict]]] = {
     "btn_onboarding_retry_install": _resolve_onboarding_retry_install,
     "btn_onboarding_retry_connection": _resolve_onboarding_retry_connection,
     "btn_onboarding_problem": _resolve_onboarding_problem,
+    "btn_onboarding_issue_enable": _onboarding_issue_button('enable'),
+    "btn_onboarding_issue_no_traffic": _onboarding_issue_button('no_traffic'),
+    "btn_onboarding_issue_mobile": _onboarding_issue_button('mobile'),
+    "btn_onboarding_issue_stale": _onboarding_issue_button('stale'),
+    "btn_onboarding_troubleshoot_back": _resolve_onboarding_troubleshoot_back,
 }

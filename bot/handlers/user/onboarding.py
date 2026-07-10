@@ -23,6 +23,13 @@ ALTERNATIVE_DOWNLOAD_PAGES = {
     'macos': 'download_macos',
 }
 
+ISSUE_PAGES = {
+    'enable': 'onboarding_issue_enable',
+    'no_traffic': 'onboarding_issue_no_traffic',
+    'mobile': 'onboarding_issue_mobile',
+    'stale': 'onboarding_issue_stale',
+}
+
 
 def _get_owned_key(key_id: int, telegram_id: int) -> Optional[dict]:
     from database.requests import get_key_details_for_user
@@ -304,6 +311,29 @@ async def onboarding_help_alternative_handler(callback: CallbackQuery):
             'connection_variant': 'alternative',
         },
     )
+
+
+@router.callback_query(F.data.startswith('onboarding_issue:'))
+async def onboarding_issue_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, issue, variant, platform, raw_key_id = callback.data.split(':', 4)
+    key_id = int(raw_key_id)
+    page_key = ISSUE_PAGES.get(issue)
+    if (
+        not page_key
+        or variant not in {'primary', 'alt'}
+        or platform not in PLATFORM_PAGES
+        or not await _require_owned_key(callback, key_id)
+    ):
+        return
+
+    context = {'key_id': key_id, 'platform': platform}
+    if variant == 'alt':
+        context['connection_variant'] = 'alternative'
+
+    await callback.answer()
+    await render_page(callback, page_key=page_key, context=context)
 
 
 @router.callback_query(F.data.startswith('onboarding_done:'))

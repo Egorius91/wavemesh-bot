@@ -31,6 +31,10 @@ Open a page as an administrator and send `/yaa`:
 - `onboarding_connection`
 - `onboarding_connection_alternative`
 - `onboarding_troubleshoot`
+- `onboarding_issue_enable`
+- `onboarding_issue_no_traffic`
+- `onboarding_issue_mobile`
+- `onboarding_issue_stale`
 - `onboarding_success`
 
 Existing `/yaa` custom text and media are not overwritten at startup.
@@ -53,6 +57,9 @@ Existing `/yaa` custom text and media are not overwritten at startup.
 12. Choose `Another application`, confirm installation, and verify that the QR
     page uses client-neutral import instructions. Retry actions must stay in
     the alternative-client flow.
+13. Test every symptom on the troubleshooting page in both the OneXray and
+    alternative-client flows. Back and retry actions must preserve the selected
+    client path.
 
 ## Rollback
 

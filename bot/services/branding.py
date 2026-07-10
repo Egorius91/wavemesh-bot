@@ -290,10 +290,72 @@ ONBOARDING_TROUBLESHOOT_BUTTONS = json.dumps(
     [
         {"id": "btn_onboarding_retry_install", "label": "Не установилось приложение", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
         {"id": "btn_onboarding_retry_connection", "label": "Не добавилось подключение", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
-        {"id": "btn_onboarding_support", "label": "💬 Написать в поддержку", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "url", "action_value": SUPPORT_URL},
+        {"id": "btn_onboarding_issue_enable", "label": "VPN не включается", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_issue_no_traffic", "label": "VPN включён, но сайты не открываются", "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_issue_mobile", "label": "Не работает по мобильной сети", "color": "secondary", "row": 4, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_issue_stale", "label": "Раньше работало, теперь нет", "color": "secondary", "row": 5, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_support", "label": "💬 Написать в поддержку", "color": "secondary", "row": 6, "col": 0, "is_hidden": False, "action_type": "url", "action_value": SUPPORT_URL},
     ],
     ensure_ascii=False,
 )
+
+
+def _onboarding_issue_buttons(*, include_mobile_issue: bool = False) -> str:
+    buttons = [
+        {"id": "btn_onboarding_retry_connection", "label": "🔗 Показать подключение снова", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+    ]
+    next_row = 1
+    if include_mobile_issue:
+        buttons.append(
+            {"id": "btn_onboarding_issue_mobile", "label": "Не работает только по мобильной сети", "color": "secondary", "row": next_row, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None}
+        )
+        next_row += 1
+    buttons.extend([
+        {"id": "btn_onboarding_support", "label": "💬 Написать в поддержку", "color": "secondary", "row": next_row, "col": 0, "is_hidden": False, "action_type": "url", "action_value": SUPPORT_URL},
+        {"id": "btn_onboarding_troubleshoot_back", "label": "⬅️ Назад", "color": "secondary", "row": next_row + 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+    ])
+    return json.dumps(buttons, ensure_ascii=False)
+
+
+ONBOARDING_ISSUE_ENABLE_TEXT = (
+    "⚡ <b>VPN не включается</b>\n\n"
+    "1. Убедитесь, что добавленное подключение выбрано в приложении.\n"
+    "2. Нажмите кнопку включения VPN ещё раз.\n"
+    "3. Если телефон спрашивает разрешение на добавление VPN-конфигурации — разрешите.\n"
+    "4. Временно выключите другие VPN, прокси и приложения-фильтры.\n\n"
+    "После этого полностью закройте VPN-клиент, откройте его снова и повторите подключение."
+)
+
+ONBOARDING_ISSUE_NO_TRAFFIC_TEXT = (
+    "🌐 <b>VPN включён, но сайты не открываются</b>\n\n"
+    "1. Выключите VPN на несколько секунд и включите снова.\n"
+    "2. Переключитесь с Wi‑Fi на мобильную сеть или наоборот.\n"
+    "3. Убедитесь, что одновременно не включён другой VPN или прокси.\n"
+    "4. Проверьте несколько разных сайтов или приложений.\n\n"
+    "Если проблема только на мобильной сети, выберите соответствующий пункт ниже."
+)
+
+ONBOARDING_ISSUE_MOBILE_TEXT = (
+    "📶 <b>Не работает по мобильной сети</b>\n\n"
+    "1. Выключите Wi‑Fi и убедитесь, что мобильный интернет работает без VPN.\n"
+    "2. Включите авиарежим на 10 секунд, затем выключите его.\n"
+    "3. Откройте VPN-клиент и подключитесь снова.\n"
+    "4. Проверьте, разрешена ли приложению работа через мобильные данные.\n\n"
+    "Если по Wi‑Fi подключение работает, а по мобильной сети нет, сообщите об этом поддержке."
+)
+
+ONBOARDING_ISSUE_STALE_TEXT = (
+    "🔄 <b>Раньше работало, теперь нет</b>\n\n"
+    "1. Перезапустите VPN-клиент и обновите подключение или подписку внутри приложения.\n"
+    "2. Переключите сеть между Wi‑Fi и мобильным интернетом.\n"
+    "3. Если профиль не обновляется, добавьте подключение повторно по кнопке ниже.\n\n"
+    "Не удаляйте старый профиль, пока новый не появится в приложении."
+)
+
+ONBOARDING_ISSUE_ENABLE_BUTTONS = _onboarding_issue_buttons()
+ONBOARDING_ISSUE_NO_TRAFFIC_BUTTONS = _onboarding_issue_buttons(include_mobile_issue=True)
+ONBOARDING_ISSUE_MOBILE_BUTTONS = _onboarding_issue_buttons()
+ONBOARDING_ISSUE_STALE_BUTTONS = _onboarding_issue_buttons()
 
 ONBOARDING_SUCCESS_TEXT = (
     "🎉 <b>Готово!</b>\n\n"
@@ -370,6 +432,10 @@ PAGE_DEFAULTS = {
     "onboarding_connection": (ONBOARDING_CONNECTION_TEXT, None, None, None),
     "onboarding_connection_alternative": (ONBOARDING_CONNECTION_ALTERNATIVE_TEXT, None, None, None),
     "onboarding_troubleshoot": (ONBOARDING_TROUBLESHOOT_TEXT, ONBOARDING_TROUBLESHOOT_BUTTONS, None, None),
+    "onboarding_issue_enable": (ONBOARDING_ISSUE_ENABLE_TEXT, ONBOARDING_ISSUE_ENABLE_BUTTONS, None, None),
+    "onboarding_issue_no_traffic": (ONBOARDING_ISSUE_NO_TRAFFIC_TEXT, ONBOARDING_ISSUE_NO_TRAFFIC_BUTTONS, None, None),
+    "onboarding_issue_mobile": (ONBOARDING_ISSUE_MOBILE_TEXT, ONBOARDING_ISSUE_MOBILE_BUTTONS, None, None),
+    "onboarding_issue_stale": (ONBOARDING_ISSUE_STALE_TEXT, ONBOARDING_ISSUE_STALE_BUTTONS, None, None),
     "onboarding_success": (ONBOARDING_SUCCESS_TEXT, ONBOARDING_SUCCESS_BUTTONS, None, None),
     "documents": (DOCUMENTS_TEXT, DOCUMENTS_BUTTONS, None, None),
     "prepayment": (PREPAYMENT_TEXT, None, None, None),
@@ -424,6 +490,13 @@ ONBOARDING_PLAIN_BUTTON_IDS = {
     "onboarding_troubleshoot": {
         "btn_onboarding_support",
     },
+}
+
+ONBOARDING_ISSUE_BUTTON_IDS = {
+    "btn_onboarding_issue_enable",
+    "btn_onboarding_issue_no_traffic",
+    "btn_onboarding_issue_mobile",
+    "btn_onboarding_issue_stale",
 }
 
 
@@ -491,6 +564,48 @@ def _migrate_onboarding_button_ux(page_key: str, buttons_json: str | None) -> st
     if not changed:
         return buttons_json
     return json.dumps(migrated_buttons, ensure_ascii=False)
+
+
+def _migrate_onboarding_troubleshoot_buttons(
+    page_key: str,
+    buttons_json: str | None,
+) -> str | None:
+    """Expand only the legacy two-option troubleshooting keyboard once."""
+    if page_key != "onboarding_troubleshoot" or not buttons_json:
+        return buttons_json
+
+    try:
+        buttons = json.loads(buttons_json)
+    except (TypeError, json.JSONDecodeError):
+        return buttons_json
+    if not isinstance(buttons, list):
+        return buttons_json
+
+    existing_ids = {
+        button.get("id")
+        for button in buttons
+        if isinstance(button, dict)
+    }
+    if existing_ids & ONBOARDING_ISSUE_BUTTON_IDS:
+        return buttons_json
+    if not {
+        "btn_onboarding_retry_install",
+        "btn_onboarding_retry_connection",
+    }.issubset(existing_ids):
+        return buttons_json
+
+    default_buttons = json.loads(ONBOARDING_TROUBLESHOOT_BUTTONS)
+    issue_buttons = [
+        button
+        for button in default_buttons
+        if button.get("id") in ONBOARDING_ISSUE_BUTTON_IDS
+    ]
+    for button in buttons:
+        if isinstance(button, dict) and button.get("id") == "btn_onboarding_support":
+            button["row"] = 6
+
+    buttons.extend(issue_buttons)
+    return json.dumps(buttons, ensure_ascii=False)
 
 
 def _migrate_help_onboarding_button(page_key: str, buttons_json: str | None) -> str | None:
@@ -597,6 +712,10 @@ def _update_page(
         next_buttons = buttons if buttons is not None else current_buttons_default
         next_buttons_custom = _migrate_onboarding_alt_button(page_key, buttons_custom)
         next_buttons_custom = _migrate_onboarding_button_ux(page_key, next_buttons_custom)
+        next_buttons_custom = _migrate_onboarding_troubleshoot_buttons(
+            page_key,
+            next_buttons_custom,
+        )
         next_buttons_custom = _migrate_help_onboarding_button(page_key, next_buttons_custom)
         next_text_custom = _migrate_help_onboarding_text(page_key, text_custom)
         next_text_custom = _migrate_onboarding_success_text(page_key, next_text_custom)
