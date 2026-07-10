@@ -11,6 +11,7 @@ import signal
 import sys
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand, MenuButtonCommands
 
 from config import BOT_TOKEN
 from database.migrations import run_migrations
@@ -56,6 +57,20 @@ logging.getLogger("aiohttp").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+async def configure_bot_menu(bot: Bot) -> None:
+    """Registers the persistent Telegram command menu for private chats."""
+    try:
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Главное меню"),
+            BotCommand(command="help", description="Помощь и настройка"),
+            BotCommand(command="mykeys", description="Мои ключи"),
+        ])
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("Меню команд Telegram настроено")
+    except Exception as e:
+        logger.warning("Не удалось настроить меню команд Telegram: %s", e)
+
+
 
 
 async def on_startup(bot: Bot):
@@ -70,6 +85,7 @@ async def on_startup(bot: Bot):
     bot_info = await bot.get_me()
     bot.my_username = bot_info.username
     logger.info(f"✅ Бот запущен: @{bot_info.username}")
+    await configure_bot_menu(bot)
     
     # Если обновления заблокированы — сразу уведомляем админов
     from bot.utils.update_block import is_update_blocked, get_blocked_message
