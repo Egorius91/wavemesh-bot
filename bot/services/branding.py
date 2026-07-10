@@ -163,8 +163,8 @@ ONBOARDING_READY_TEXT = (
 
 ONBOARDING_READY_BUTTONS = json.dumps(
     [
-        {"id": "btn_onboarding_ios", "label": "🍎 iPhone / iPad", "color": "primary", "row": 0, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
-        {"id": "btn_onboarding_android", "label": "🤖 Android", "color": "primary", "row": 0, "col": 1, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_ios", "label": "🍎 iPhone / iPad", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_android", "label": "🤖 Android", "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "system", "action_value": None},
         {"id": "btn_onboarding_windows", "label": "💻 Windows", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
         {"id": "btn_onboarding_macos", "label": "🖥 macOS", "color": "secondary", "row": 1, "col": 1, "is_hidden": False, "action_type": "system", "action_value": None},
         {"id": "btn_onboarding_advanced", "label": "🛠 Для опытных пользователей", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
@@ -191,8 +191,8 @@ def _onboarding_platform_buttons(
 ) -> str:
     return json.dumps(
         [
-            {"id": "btn_onboarding_install", "label": "⬇️ Установить OneXray", "color": "primary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": install_url},
-            {"id": continue_button_id, "label": "✅ Приложение установлено", "color": "success", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+            {"id": "btn_onboarding_install", "label": "⬇️ Установить OneXray", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": install_url},
+            {"id": continue_button_id, "label": "✅ Приложение установлено", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
             {"id": alternate_button_id, "label": "Другой вариант приложения", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
             {"id": "btn_onboarding_back", "label": "⬅️ Назад", "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
         ],
@@ -251,8 +251,7 @@ ONBOARDING_TROUBLESHOOT_BUTTONS = json.dumps(
     [
         {"id": "btn_onboarding_retry_install", "label": "Не установилось приложение", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
         {"id": "btn_onboarding_retry_connection", "label": "Не добавилось подключение", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
-        {"id": "btn_onboarding_support", "label": "💬 Написать в поддержку", "color": "primary", "row": 2, "col": 0, "is_hidden": False, "action_type": "url", "action_value": SUPPORT_URL},
-        {"id": "btn_my_keys", "label": "🔑 Мои ключи", "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_my_keys"},
+        {"id": "btn_onboarding_support", "label": "💬 Написать в поддержку", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "url", "action_value": SUPPORT_URL},
     ],
     ensure_ascii=False,
 )
@@ -359,6 +358,32 @@ ONBOARDING_ALT_BUTTON_IDS = {
     "onboarding_macos": "btn_onboarding_alt_macos",
 }
 
+ONBOARDING_PLAIN_BUTTON_IDS = {
+    "onboarding_ready": {
+        "btn_onboarding_ios",
+        "btn_onboarding_android",
+    },
+    "onboarding_ios": {
+        "btn_onboarding_install",
+        "btn_onboarding_continue_ios",
+    },
+    "onboarding_android": {
+        "btn_onboarding_install",
+        "btn_onboarding_continue_android",
+    },
+    "onboarding_windows": {
+        "btn_onboarding_install",
+        "btn_onboarding_continue_windows",
+    },
+    "onboarding_macos": {
+        "btn_onboarding_install",
+        "btn_onboarding_continue_macos",
+    },
+    "onboarding_troubleshoot": {
+        "btn_onboarding_support",
+    },
+}
+
 
 def _migrate_onboarding_alt_button(page_key: str, buttons_json: str | None) -> str | None:
     """Move old onboarding alternative buttons out of the global download flow."""
@@ -386,6 +411,44 @@ def _migrate_onboarding_alt_button(page_key: str, buttons_json: str | None) -> s
     if not changed:
         return buttons_json
     return json.dumps(buttons, ensure_ascii=False)
+
+
+def _migrate_onboarding_button_ux(page_key: str, buttons_json: str | None) -> str | None:
+    """Normalize onboarding buttons for Telegram clients and remove stale actions."""
+    if not buttons_json:
+        return buttons_json
+
+    plain_button_ids = ONBOARDING_PLAIN_BUTTON_IDS.get(page_key, set())
+    remove_my_keys = page_key == "onboarding_troubleshoot"
+    if not plain_button_ids and not remove_my_keys:
+        return buttons_json
+
+    try:
+        buttons = json.loads(buttons_json)
+    except (TypeError, json.JSONDecodeError):
+        return buttons_json
+    if not isinstance(buttons, list):
+        return buttons_json
+
+    changed = False
+    migrated_buttons = []
+    for button in buttons:
+        if not isinstance(button, dict):
+            migrated_buttons.append(button)
+            continue
+
+        button_id = button.get("id")
+        if remove_my_keys and button_id == "btn_my_keys":
+            changed = True
+            continue
+        if button_id in plain_button_ids and button.get("color") != "secondary":
+            button["color"] = "secondary"
+            changed = True
+        migrated_buttons.append(button)
+
+    if not changed:
+        return buttons_json
+    return json.dumps(migrated_buttons, ensure_ascii=False)
 
 
 def _update_page(
@@ -433,6 +496,7 @@ def _update_page(
         current_buttons_default = row["buttons_default"] if row else buttons_to_insert
         next_buttons = buttons if buttons is not None else current_buttons_default
         next_buttons_custom = _migrate_onboarding_alt_button(page_key, buttons_custom)
+        next_buttons_custom = _migrate_onboarding_button_ux(page_key, next_buttons_custom)
 
         update_custom_text = _needs_replacement(text_custom)
         update_custom_buttons = (

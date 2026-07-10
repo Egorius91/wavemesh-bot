@@ -56,7 +56,6 @@ def onboarding_connection_kb(key_id: int, platform: str) -> InlineKeyboardMarkup
         InlineKeyboardButton(
             text='✅ VPN включён',
             callback_data=f'onboarding_done:{platform}:{key_id}',
-            style='success',
         )
     )
     builder.row(
@@ -150,7 +149,6 @@ async def onboarding_alternative_handler(callback: CallbackQuery):
                 InlineKeyboardButton(
                     text='✅ Приложение установлено',
                     callback_data=f'onboarding_connection:{platform}:{key_id}',
-                    style='success',
                 )
             ],
             [
