@@ -30,6 +30,7 @@ SUPPORTED_YAA_PAGE_KEYS = frozenset({
     'onboarding_windows',
     'onboarding_macos',
     'onboarding_connection',
+    'onboarding_connection_alternative',
     'onboarding_troubleshoot',
     'onboarding_success',
     'trial',

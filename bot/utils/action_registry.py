@@ -327,6 +327,8 @@ def _resolve_onboarding_retry_install(ctx: dict) -> Optional[dict]:
     platform = _onboarding_platform(ctx)
     if not key_id or not platform:
         return None
+    if ctx.get('connection_variant') == 'alternative':
+        return {'callback_data': f'onboarding_alt:{platform}:{key_id}'}
     return {'callback_data': f'onboarding_platform:{platform}:{key_id}'}
 
 
@@ -335,6 +337,8 @@ def _resolve_onboarding_retry_connection(ctx: dict) -> Optional[dict]:
     platform = _onboarding_platform(ctx)
     if not key_id or not platform:
         return None
+    if ctx.get('connection_variant') == 'alternative':
+        return {'callback_data': f'onboarding_connection_alt:{platform}:{key_id}'}
     return {'callback_data': f'onboarding_connection:{platform}:{key_id}'}
 
 
@@ -343,6 +347,8 @@ def _resolve_onboarding_problem(ctx: dict) -> Optional[dict]:
     platform = _onboarding_platform(ctx)
     if not key_id or not platform:
         return None
+    if ctx.get('connection_variant') == 'alternative':
+        return {'callback_data': f'onboarding_help_alt:{platform}:{key_id}'}
     return {'callback_data': f'onboarding_help:{platform}:{key_id}'}
 
 

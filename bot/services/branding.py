@@ -267,6 +267,18 @@ ONBOARDING_CONNECTION_TEXT = (
     "После добавления выберите подключение и включите VPN."
 )
 
+ONBOARDING_CONNECTION_ALTERNATIVE_TEXT = (
+    "🔗 <b>Шаг 2 из 3 · Добавьте подключение</b>\n\n"
+    "1. Откройте установленный VPN-клиент.\n"
+    "2. Найдите добавление нового подключения: обычно это кнопка <b>＋</b>, "
+    "<b>Добавить</b> или <b>Импортировать</b>.\n"
+    "3. Импортируйте ссылку из буфера обмена:\n"
+    "%ключ%\n\n"
+    "Также можно открыть сканер QR-кода в приложении и отсканировать изображение выше. "
+    "Названия пунктов могут отличаться в разных VPN-клиентах.\n\n"
+    "После добавления выберите подключение и включите VPN."
+)
+
 ONBOARDING_TROUBLESHOOT_TEXT = (
     "🧰 <b>Что именно не получилось?</b>\n\n"
     "Выберите ближайший вариант — бот вернёт вас к нужному шагу.\n\n"
@@ -285,7 +297,7 @@ ONBOARDING_TROUBLESHOOT_BUTTONS = json.dumps(
 
 ONBOARDING_SUCCESS_TEXT = (
     "🎉 <b>Готово!</b>\n\n"
-    "Подключение добавлено. Откройте OneXray, выберите его на главном экране "
+    "Подключение добавлено. Откройте выбранный VPN-клиент, выберите подключение "
     "и включите VPN.\n\n"
     "Если сайты открываются — настройка завершена."
 )
@@ -356,6 +368,7 @@ PAGE_DEFAULTS = {
     "onboarding_windows": (ONBOARDING_WINDOWS_TEXT, ONBOARDING_WINDOWS_BUTTONS, None, None),
     "onboarding_macos": (ONBOARDING_MACOS_TEXT, ONBOARDING_MACOS_BUTTONS, None, None),
     "onboarding_connection": (ONBOARDING_CONNECTION_TEXT, None, None, None),
+    "onboarding_connection_alternative": (ONBOARDING_CONNECTION_ALTERNATIVE_TEXT, None, None, None),
     "onboarding_troubleshoot": (ONBOARDING_TROUBLESHOOT_TEXT, ONBOARDING_TROUBLESHOOT_BUTTONS, None, None),
     "onboarding_success": (ONBOARDING_SUCCESS_TEXT, ONBOARDING_SUCCESS_BUTTONS, None, None),
     "documents": (DOCUMENTS_TEXT, DOCUMENTS_BUTTONS, None, None),
@@ -529,6 +542,15 @@ def _migrate_help_onboarding_text(page_key: str, text_custom: str | None) -> str
     return text_custom
 
 
+def _migrate_onboarding_success_text(page_key: str, text_custom: str | None) -> str | None:
+    """Make the known OneXray-specific success copy client-neutral."""
+    if page_key != "onboarding_success" or not text_custom:
+        return text_custom
+    if "Откройте OneXray" in text_custom:
+        return ONBOARDING_SUCCESS_TEXT
+    return text_custom
+
+
 def _update_page(
     page_key: str,
     text: str,
@@ -577,6 +599,7 @@ def _update_page(
         next_buttons_custom = _migrate_onboarding_button_ux(page_key, next_buttons_custom)
         next_buttons_custom = _migrate_help_onboarding_button(page_key, next_buttons_custom)
         next_text_custom = _migrate_help_onboarding_text(page_key, text_custom)
+        next_text_custom = _migrate_onboarding_success_text(page_key, next_text_custom)
 
         update_custom_text = (
             _needs_replacement(text_custom)

@@ -29,6 +29,7 @@ Open a page as an administrator and send `/yaa`:
 - `onboarding_windows`
 - `onboarding_macos`
 - `onboarding_connection`
+- `onboarding_connection_alternative`
 - `onboarding_troubleshoot`
 - `onboarding_success`
 
@@ -49,6 +50,9 @@ Existing `/yaa` custom text and media are not overwritten at startup.
 10. Open the wizard from Help with zero, one, and several available keys.
 11. Confirm that expired, unconfigured, and traffic-exhausted keys are not
     offered by Help and do not show `Configure VPN` in their key cards.
+12. Choose `Another application`, confirm installation, and verify that the QR
+    page uses client-neutral import instructions. Retry actions must stay in
+    the alternative-client flow.
 
 ## Rollback
 

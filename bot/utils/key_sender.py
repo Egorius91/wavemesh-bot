@@ -142,19 +142,27 @@ def _build_key_delivery_caption(
     if len(caption) <= 1024:
         return caption
 
-    if page_key == 'onboarding_connection':
-        compact = (
-            "🔗 <b>Добавьте подключение</b>\n\n"
-            f"{format_key_copy_value(raw_value)}\n\n"
-            "Откройте в OneXray меню <b>＋</b> и выберите <b>Read Clipboard</b> "
-            "или отсканируйте QR-код."
-        )
+    if page_key in {'onboarding_connection', 'onboarding_connection_alternative'}:
+        if page_key == 'onboarding_connection_alternative':
+            compact = (
+                "🔗 <b>Добавьте подключение</b>\n\n"
+                f"{format_key_copy_value(raw_value)}\n\n"
+                "Импортируйте ссылку из буфера обмена или отсканируйте QR-код "
+                "через меню добавления подключения в вашем VPN-клиенте."
+            )
+        else:
+            compact = (
+                "🔗 <b>Добавьте подключение</b>\n\n"
+                f"{format_key_copy_value(raw_value)}\n\n"
+                "Откройте в OneXray меню <b>＋</b> и выберите <b>Read Clipboard</b> "
+                "или отсканируйте QR-код."
+            )
         if len(compact) <= 1024:
             return compact
         return (
             "🔗 <b>Добавьте подключение</b>\n\n"
             "Ссылка слишком длинная для подписи Telegram. Отсканируйте QR-код "
-            "или используйте файл конфигурации, который бот отправит следом."
+            "в меню добавления подключения вашего VPN-клиента."
         )
 
     if kind == 'subscription':
@@ -309,16 +317,25 @@ async def rerender_key_delivery_page_context(page_context, viewer_id: int) -> bo
     key_id = context.get(KEY_DELIVERY_CONTEXT_KEY_ID)
     platform = context.get(KEY_DELIVERY_CONTEXT_PLATFORM)
     key_manage_markup = None
+    is_alternative = page_context.page_key == 'onboarding_connection_alternative'
     if not use_page_markup and key_id and platform:
         from bot.handlers.user.onboarding import onboarding_connection_kb
 
-        key_manage_markup = onboarding_connection_kb(int(key_id), str(platform))
+        key_manage_markup = onboarding_connection_kb(
+            int(key_id),
+            str(platform),
+            alternative=is_alternative,
+        )
 
     fallback_text = DEFAULT_KEY_DELIVERY_TEXT
     if page_context.page_key == 'onboarding_connection':
         from bot.services.branding import ONBOARDING_CONNECTION_TEXT
 
         fallback_text = ONBOARDING_CONNECTION_TEXT
+    elif is_alternative:
+        from bot.services.branding import ONBOARDING_CONNECTION_ALTERNATIVE_TEXT
+
+        fallback_text = ONBOARDING_CONNECTION_ALTERNATIVE_TEXT
 
     await render_key_delivery_page(
         page_context.message,

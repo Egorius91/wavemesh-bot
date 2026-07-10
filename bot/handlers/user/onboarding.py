@@ -71,18 +71,25 @@ async def start_key_onboarding(target, key_data: dict) -> None:
     )
 
 
-def onboarding_connection_kb(key_id: int, platform: str) -> InlineKeyboardMarkup:
+def onboarding_connection_kb(
+    key_id: int,
+    platform: str,
+    *,
+    alternative: bool = False,
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    done_callback = 'onboarding_done_alt' if alternative else 'onboarding_done'
+    help_callback = 'onboarding_help_alt' if alternative else 'onboarding_help'
     builder.row(
         InlineKeyboardButton(
             text='✅ VPN включён',
-            callback_data=f'onboarding_done:{platform}:{key_id}',
+            callback_data=f'{done_callback}:{platform}:{key_id}',
         )
     )
     builder.row(
         InlineKeyboardButton(
             text='🧰 Не получается',
-            callback_data=f'onboarding_help:{platform}:{key_id}',
+            callback_data=f'{help_callback}:{platform}:{key_id}',
         )
     )
     return builder.as_markup()
@@ -183,6 +190,30 @@ async def onboarding_connection_handler(callback: CallbackQuery):
     )
 
 
+@router.callback_query(F.data.startswith('onboarding_connection_alt:'))
+async def onboarding_connection_alternative_handler(callback: CallbackQuery):
+    from bot.services.branding import ONBOARDING_CONNECTION_ALTERNATIVE_TEXT
+    from bot.utils.key_sender import send_key_with_qr
+
+    _, platform, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    key = await _require_owned_key(callback, key_id)
+    if not key or platform not in PLATFORM_PAGES:
+        return
+
+    await callback.answer()
+    await send_key_with_qr(
+        callback,
+        key,
+        onboarding_connection_kb(key_id, platform, alternative=True),
+        is_new=False,
+        page_key='onboarding_connection_alternative',
+        fallback_text=ONBOARDING_CONNECTION_ALTERNATIVE_TEXT,
+        use_page_markup=False,
+        onboarding_platform=platform,
+    )
+
+
 @router.callback_query(F.data.startswith('onboarding_alt:'))
 async def onboarding_alternative_handler(callback: CallbackQuery):
     from bot.utils.page_renderer import render_page
@@ -206,7 +237,7 @@ async def onboarding_alternative_handler(callback: CallbackQuery):
             [
                 InlineKeyboardButton(
                     text='✅ Приложение установлено',
-                    callback_data=f'onboarding_connection:{platform}:{key_id}',
+                    callback_data=f'onboarding_connection_alt:{platform}:{key_id}',
                 )
             ],
             [
@@ -254,6 +285,27 @@ async def onboarding_help_handler(callback: CallbackQuery):
     )
 
 
+@router.callback_query(F.data.startswith('onboarding_help_alt:'))
+async def onboarding_help_alternative_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, platform, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    if platform not in PLATFORM_PAGES or not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key='onboarding_troubleshoot',
+        context={
+            'key_id': key_id,
+            'platform': platform,
+            'connection_variant': 'alternative',
+        },
+    )
+
+
 @router.callback_query(F.data.startswith('onboarding_done:'))
 async def onboarding_done_handler(callback: CallbackQuery):
     from bot.utils.page_renderer import render_page
@@ -268,4 +320,25 @@ async def onboarding_done_handler(callback: CallbackQuery):
         callback,
         page_key='onboarding_success',
         context={'key_id': key_id, 'platform': platform},
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_done_alt:'))
+async def onboarding_done_alternative_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, platform, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    if platform not in PLATFORM_PAGES or not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key='onboarding_success',
+        context={
+            'key_id': key_id,
+            'platform': platform,
+            'connection_variant': 'alternative',
+        },
     )
