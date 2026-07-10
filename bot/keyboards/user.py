@@ -575,6 +575,12 @@ def key_manage_kb(key_id: int, is_unconfigured: bool = False, is_active: bool = 
             )
         )
         builder.row(
+            InlineKeyboardButton(
+                text="🧭 Настроить VPN",
+                callback_data=f"onboarding_ready:{key_id}",
+            )
+        )
+        builder.row(
             InlineKeyboardButton(text="📈 Продлить", callback_data=f"key_renew:{key_id}")
         )
         

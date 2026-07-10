@@ -24,6 +24,7 @@ ACTION_REGISTRY: Dict[str, str] = {
     "cmd_buy":              "buy_key",
     "cmd_my_keys":          "my_keys",
     "cmd_help":             "help",
+    "cmd_onboarding_start": "onboarding_start",
     "cmd_download_clients": "download_clients",
     "cmd_download_ios":     "download_ios",
     "cmd_download_android": "download_android",

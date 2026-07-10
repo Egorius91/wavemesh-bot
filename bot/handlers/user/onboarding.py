@@ -30,6 +30,27 @@ def _get_owned_key(key_id: int, telegram_id: int) -> Optional[dict]:
     return get_key_details_for_user(key_id, telegram_id)
 
 
+def _get_available_onboarding_keys(telegram_id: int) -> list[dict]:
+    """Return configured keys that can currently be used for a new connection."""
+    from database.requests import get_user_keys_for_display, is_traffic_exhausted
+
+    return [
+        key
+        for key in get_user_keys_for_display(telegram_id)
+        if key.get('is_active')
+        and key.get('server_id')
+        and (key.get('client_uuid') or key.get('sub_id'))
+        and not is_traffic_exhausted(key)
+    ]
+
+
+def _key_choice_label(key: dict) -> str:
+    label = str(key.get('display_name') or f"Ключ #{key['id']}")
+    if len(label) > 48:
+        label = f'{label[:45]}...'
+    return f'🔑 {label}'
+
+
 async def _require_owned_key(callback: CallbackQuery, key_id: int) -> Optional[dict]:
     key = _get_owned_key(key_id, callback.from_user.id)
     if key:
@@ -65,6 +86,43 @@ def onboarding_connection_kb(key_id: int, platform: str) -> InlineKeyboardMarkup
         )
     )
     return builder.as_markup()
+
+
+@router.callback_query(F.data == 'onboarding_start')
+async def onboarding_start_handler(callback: CallbackQuery):
+    """Starts setup from Help, selecting a key only when it is necessary."""
+    from bot.utils.page_renderer import render_page
+
+    keys = _get_available_onboarding_keys(callback.from_user.id)
+    await callback.answer()
+
+    if not keys:
+        await render_page(callback, page_key='onboarding_no_available_key')
+        return
+
+    if len(keys) == 1:
+        await render_page(
+            callback,
+            page_key='onboarding_ready',
+            context={'key_id': keys[0]['id']},
+        )
+        return
+
+    key_buttons = [
+        [
+            InlineKeyboardButton(
+                text=_key_choice_label(key),
+                callback_data=f"onboarding_ready:{key['id']}",
+            )
+        ]
+        for key in keys
+    ]
+    await render_page(
+        callback,
+        page_key='onboarding_key_select',
+        context={'telegram_id': callback.from_user.id},
+        prepend_buttons=key_buttons,
+    )
 
 
 @router.callback_query(F.data.startswith('onboarding_ready:'))

@@ -12,11 +12,18 @@ After a new key is configured, the bot opens:
 The existing key delivery remains available through `Advanced users`. Existing
 keys, renewals, payments, and recurring billing keep their previous behavior.
 
+The same wizard can be opened later from an active configured key with
+`Configure VPN`, or from Help. Help opens the wizard immediately for one
+available key, asks the user to choose when several keys are available, and
+shows recovery actions when there is no suitable key.
+
 ## Editable pages
 
 Open a page as an administrator and send `/yaa`:
 
 - `onboarding_ready`
+- `onboarding_key_select`
+- `onboarding_no_available_key`
 - `onboarding_ios`
 - `onboarding_android`
 - `onboarding_windows`
@@ -38,6 +45,10 @@ Existing `/yaa` custom text and media are not overwritten at startup.
 6. Test `Advanced users` and confirm that the previous key delivery still works.
 7. Repeat with a one-time key and confirm that its QR and JSON file are sent.
 8. Restart the bot and confirm that `/yaa` customizations remain.
+9. Open the wizard from an active key card and confirm that the same key is used.
+10. Open the wizard from Help with zero, one, and several available keys.
+11. Confirm that expired, unconfigured, and traffic-exhausted keys are not
+    offered by Help and do not show `Configure VPN` in their key cards.
 
 ## Rollback
 

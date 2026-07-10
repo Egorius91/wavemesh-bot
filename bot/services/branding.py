@@ -58,13 +58,13 @@ MAIN_BUTTONS = json.dumps(
 HELP_TEXT = (
     "🔐 <b>Справка WaveMesh VPN</b>\n\n"
     "Здесь собраны основные инструкции для подключения и управления доступом.\n\n"
-    "Начните с раздела загрузки клиента, затем откройте «Мои ключи», скопируйте ссылку подключения "
-    "и импортируйте её в выбранное приложение."
+    "Чтобы установить приложение и добавить подключение, запустите мастер настройки. "
+    "Он проведёт вас по шагам для вашего устройства."
 )
 
 HELP_BUTTONS = json.dumps(
     [
-        {"id": "btn_download_clients", "label": "📱 Скачать VPN-клиент", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
+        {"id": "btn_onboarding_start", "label": "🧭 Настроить VPN", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_onboarding_start"},
         {"id": "btn_news",             "label": "📢 Новости",             "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": NEWS_URL},
         {"id": "btn_support",          "label": "💬 Поддержка",           "color": "secondary", "row": 1, "col": 1, "is_hidden": False, "action_type": "url", "action_value": SUPPORT_URL},
         {"id": "btn_back_main",        "label": "🈴 На главную",          "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_back_main"},
@@ -169,6 +169,33 @@ ONBOARDING_READY_BUTTONS = json.dumps(
         {"id": "btn_onboarding_macos", "label": "🖥 macOS", "color": "secondary", "row": 1, "col": 1, "is_hidden": False, "action_type": "system", "action_value": None},
         {"id": "btn_onboarding_advanced", "label": "🛠 Для опытных пользователей", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
         {"id": "btn_my_keys", "label": "🔑 Мои ключи", "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_my_keys"},
+    ],
+    ensure_ascii=False,
+)
+
+ONBOARDING_KEY_SELECT_TEXT = (
+    "🧭 <b>Какой ключ настроить?</b>\n\n"
+    "У вас несколько активных подключений. Выберите ключ, который хотите добавить на устройство."
+)
+
+ONBOARDING_KEY_SELECT_BUTTONS = json.dumps(
+    [
+        {"id": "btn_back_help", "label": "⬅️ Назад", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_help"},
+    ],
+    ensure_ascii=False,
+)
+
+ONBOARDING_NO_AVAILABLE_KEY_TEXT = (
+    "🧭 <b>Нет ключа для настройки</b>\n\n"
+    "Для запуска мастера нужен активный и настроенный VPN-ключ. "
+    "Откройте «Мои ключи» или приобретите новый доступ."
+)
+
+ONBOARDING_NO_AVAILABLE_KEY_BUTTONS = json.dumps(
+    [
+        {"id": "btn_my_keys", "label": "🔑 Мои ключи", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_my_keys"},
+        {"id": "btn_buy_key", "label": "💳 Купить ключ", "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "internal", "action_value": "cmd_buy"},
+        {"id": "btn_back_help", "label": "⬅️ Назад", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_help"},
     ],
     ensure_ascii=False,
 )
@@ -322,6 +349,8 @@ PAGE_DEFAULTS = {
     "download_windows": (DOWNLOAD_WINDOWS_TEXT, DOWNLOAD_WINDOWS_BUTTONS, None, None),
     "download_macos": (DOWNLOAD_MACOS_TEXT, DOWNLOAD_MACOS_BUTTONS, None, None),
     "onboarding_ready": (ONBOARDING_READY_TEXT, ONBOARDING_READY_BUTTONS, None, None),
+    "onboarding_key_select": (ONBOARDING_KEY_SELECT_TEXT, ONBOARDING_KEY_SELECT_BUTTONS, None, None),
+    "onboarding_no_available_key": (ONBOARDING_NO_AVAILABLE_KEY_TEXT, ONBOARDING_NO_AVAILABLE_KEY_BUTTONS, None, None),
     "onboarding_ios": (ONBOARDING_IOS_TEXT, ONBOARDING_IOS_BUTTONS, None, None),
     "onboarding_android": (ONBOARDING_ANDROID_TEXT, ONBOARDING_ANDROID_BUTTONS, None, None),
     "onboarding_windows": (ONBOARDING_WINDOWS_TEXT, ONBOARDING_WINDOWS_BUTTONS, None, None),
@@ -451,6 +480,55 @@ def _migrate_onboarding_button_ux(page_key: str, buttons_json: str | None) -> st
     return json.dumps(migrated_buttons, ensure_ascii=False)
 
 
+def _migrate_help_onboarding_button(page_key: str, buttons_json: str | None) -> str | None:
+    """Replace the legacy client-download entry with the guided setup entry."""
+    if page_key != "help" or not buttons_json:
+        return buttons_json
+
+    try:
+        buttons = json.loads(buttons_json)
+    except (TypeError, json.JSONDecodeError):
+        return buttons_json
+    if not isinstance(buttons, list):
+        return buttons_json
+
+    changed = False
+    for button in buttons:
+        if not isinstance(button, dict):
+            continue
+        if (
+            button.get("id") != "btn_download_clients"
+            and button.get("action_value") != "cmd_download_clients"
+        ):
+            continue
+
+        button.update({
+            "id": "btn_onboarding_start",
+            "label": "🧭 Настроить VPN",
+            "color": "secondary",
+            "action_type": "internal",
+            "action_value": "cmd_onboarding_start",
+        })
+        changed = True
+
+    if not changed:
+        return buttons_json
+    return json.dumps(buttons, ensure_ascii=False)
+
+
+def _migrate_help_onboarding_text(page_key: str, text_custom: str | None) -> str | None:
+    """Replace only the known legacy Help copy that points to the old flow."""
+    if page_key != "help" or not text_custom:
+        return text_custom
+    legacy_help_markers = (
+        "Начните с раздела загрузки клиента",
+        "Скачать VPN-клиент",
+    )
+    if any(marker in text_custom for marker in legacy_help_markers):
+        return HELP_TEXT
+    return text_custom
+
+
 def _update_page(
     page_key: str,
     text: str,
@@ -497,8 +575,13 @@ def _update_page(
         next_buttons = buttons if buttons is not None else current_buttons_default
         next_buttons_custom = _migrate_onboarding_alt_button(page_key, buttons_custom)
         next_buttons_custom = _migrate_onboarding_button_ux(page_key, next_buttons_custom)
+        next_buttons_custom = _migrate_help_onboarding_button(page_key, next_buttons_custom)
+        next_text_custom = _migrate_help_onboarding_text(page_key, text_custom)
 
-        update_custom_text = _needs_replacement(text_custom)
+        update_custom_text = (
+            _needs_replacement(text_custom)
+            or next_text_custom != text_custom
+        )
         update_custom_buttons = (
             buttons is not None
             and (
@@ -525,7 +608,7 @@ def _update_page(
                 image,
                 media_type,
                 1 if update_custom_text else 0,
-                text,
+                next_text_custom if next_text_custom != text_custom else text,
                 1 if update_custom_buttons else 0,
                 next_buttons_custom if next_buttons_custom != buttons_custom else next_buttons,
                 page_key,

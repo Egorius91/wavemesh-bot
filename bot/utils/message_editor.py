@@ -35,6 +35,8 @@ PAGE_KEYS = (
     'download_windows',
     'download_macos',
     'onboarding_ready',
+    'onboarding_key_select',
+    'onboarding_no_available_key',
     'onboarding_ios',
     'onboarding_android',
     'onboarding_windows',
