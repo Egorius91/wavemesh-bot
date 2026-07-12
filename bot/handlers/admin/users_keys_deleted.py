@@ -5,6 +5,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery
 import logging
 import json
+import sqlite3
 
 from bot.utils.text import safe_edit_or_send
 from bot.keyboards.admin_users import (
@@ -65,7 +66,18 @@ async def on_key_delete_confirm(callback: CallbackQuery):
     user_telegram_id = key.get('telegram_id', 0)
 
     # 1. Сначала удаляем из БД — это главный источник правды
-    delete_vpn_key(key_id)
+    try:
+        deleted = delete_vpn_key(key_id)
+    except sqlite3.IntegrityError:
+        logger.exception("Database rejected deletion of key %s", key_id)
+        await callback.answer(
+            "Не удалось удалить ключ: проверьте связанные записи в базе.",
+            show_alert=True,
+        )
+        return
+    if not deleted:
+        await callback.answer("Ключ уже был удалён.", show_alert=True)
+        return
     logger.info(f"Ключ #{key_id} удалён из БД (админ)")
 
     # 2. Затем пытаемся удалить с панели, если ключ был привязан

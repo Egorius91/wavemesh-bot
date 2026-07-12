@@ -580,6 +580,40 @@ def delete_vpn_key(key_id: int) -> bool:
         True если успешно
     """
     with get_db() as conn:
+        subscription_rows = conn.execute(
+            "SELECT id FROM subscriptions WHERE vpn_key_id = ?",
+            (key_id,),
+        ).fetchall()
+        subscription_ids = [int(row['id']) for row in subscription_rows]
+
+        if subscription_ids:
+            placeholders = ','.join('?' for _ in subscription_ids)
+            conn.execute(
+                f"""
+                UPDATE payments
+                SET payment_method_id = NULL
+                WHERE subscription_id IN ({placeholders})
+                """,
+                subscription_ids,
+            )
+            conn.execute(
+                """
+                UPDATE subscriptions
+                SET status = 'cancelled',
+                    payment_method_id = NULL,
+                    cancel_at_period_end = 1,
+                    cancelled_at = COALESCE(cancelled_at, CURRENT_TIMESTAMP),
+                    vpn_key_id = NULL
+                WHERE vpn_key_id = ?
+                """,
+                (key_id,),
+            )
+            logger.info(
+                "Cancelled and unlinked %s subscription(s) for deleted key %s",
+                len(subscription_ids),
+                key_id,
+            )
+
         # Убираем привязку в истории оплат (чтобы сохранить саму историю)
         conn.execute("UPDATE payments SET vpn_key_id = NULL WHERE vpn_key_id = ?", (key_id,))
         # Удаляем логи уведомлений
