@@ -6,6 +6,7 @@ from typing import Optional
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from bot.utils.onboarding_callbacks import HAPP_DISTRIBUTIONS, parse_happ_callback
 
 router = Router()
 
@@ -28,6 +29,27 @@ ISSUE_PAGES = {
     'no_traffic': 'onboarding_issue_no_traffic',
     'mobile': 'onboarding_issue_mobile',
     'stale': 'onboarding_issue_stale',
+}
+
+HAPP_DEFAULT_DISTRIBUTIONS = {
+    'android': 'google_play',
+    'windows': 'windows',
+    'macos': 'macos',
+}
+
+HAPP_INSTALL_PAGES = {
+    ('ios', 'ru'): 'onboarding_happ_install_ru',
+    ('ios', 'global'): 'onboarding_happ_install_global',
+    ('android', 'google_play'): 'onboarding_happ_install_android',
+    ('windows', 'windows'): 'onboarding_happ_install_windows',
+    ('macos', 'macos'): 'onboarding_happ_install_macos',
+}
+
+HAPP_CONNECTION_PAGES = {
+    'ios': 'onboarding_happ_connection',
+    'android': 'onboarding_happ_connection_android',
+    'windows': 'onboarding_happ_connection_windows',
+    'macos': 'onboarding_happ_connection_macos',
 }
 
 
@@ -227,9 +249,9 @@ async def onboarding_alternative_handler(callback: CallbackQuery):
 
     _, platform, raw_key_id = callback.data.split(':', 2)
     key_id = int(raw_key_id)
+    if not await _require_owned_key(callback, key_id):
+        return
     if platform == 'ios':
-        if not await _require_owned_key(callback, key_id):
-            return
         await callback.answer()
         await render_page(
             callback,
@@ -238,8 +260,24 @@ async def onboarding_alternative_handler(callback: CallbackQuery):
         )
         return
 
+    distribution = HAPP_DEFAULT_DISTRIBUTIONS.get(platform)
+    page_key = HAPP_INSTALL_PAGES.get((platform, distribution))
+    if page_key:
+        await callback.answer()
+        await render_page(
+            callback,
+            page_key=page_key,
+            context={
+                'key_id': key_id,
+                'platform': platform,
+                'app': 'happ',
+                'distribution': distribution,
+            },
+        )
+        return
+
     page_key = ALTERNATIVE_DOWNLOAD_PAGES.get(platform)
-    if not page_key or not await _require_owned_key(callback, key_id):
+    if not page_key:
         return
 
     await callback.answer()
@@ -273,22 +311,23 @@ async def onboarding_alternative_handler(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith('onboarding_alt_other:'))
-async def onboarding_other_ios_apps_handler(callback: CallbackQuery):
+async def onboarding_other_apps_handler(callback: CallbackQuery):
     from bot.utils.page_renderer import render_page
 
     _, platform, raw_key_id = callback.data.split(':', 2)
     key_id = int(raw_key_id)
-    if platform != 'ios' or not await _require_owned_key(callback, key_id):
+    page_key = ALTERNATIVE_DOWNLOAD_PAGES.get(platform)
+    if not page_key or not await _require_owned_key(callback, key_id):
         return
 
     await callback.answer()
     await render_page(
         callback,
-        page_key='download_ios',
+        page_key=page_key,
         visibility={'btn_back_downloads': False},
         context={
             'key_id': key_id,
-            'platform': 'ios',
+            'platform': platform,
             'connection_variant': 'alternative',
         },
     )
@@ -298,41 +337,58 @@ async def onboarding_other_ios_apps_handler(callback: CallbackQuery):
 async def onboarding_happ_install_handler(callback: CallbackQuery):
     from bot.utils.page_renderer import render_page
 
-    _, region, raw_key_id = callback.data.split(':', 2)
-    key_id = int(raw_key_id)
-    if region not in {'ru', 'global'} or not await _require_owned_key(callback, key_id):
+    parsed = parse_happ_callback(callback.data)
+    if not parsed:
+        await callback.answer('Некорректный шаг настройки', show_alert=True)
+        return
+    platform, distribution, key_id = parsed
+    page_key = HAPP_INSTALL_PAGES.get((platform, distribution))
+    if not page_key or not await _require_owned_key(callback, key_id):
         return
 
     await callback.answer()
     await render_page(
         callback,
-        page_key=f'onboarding_happ_install_{region}',
+        page_key=page_key,
         context={
             'key_id': key_id,
-            'platform': 'ios',
+            'platform': platform,
             'app': 'happ',
-            'region': region,
+            'region': distribution if platform == 'ios' else None,
+            'distribution': distribution,
         },
     )
 
 
 @router.callback_query(F.data.startswith('onboarding_happ_connection:'))
 async def onboarding_happ_connection_handler(callback: CallbackQuery):
-    from bot.services.branding import ONBOARDING_HAPP_CONNECTION_TEXT
+    from bot.services import branding
     from bot.utils.key_sender import send_key_with_qr
     from bot.utils.page_renderer import build_page_keyboard
 
-    _, region, raw_key_id = callback.data.split(':', 2)
-    key_id = int(raw_key_id)
-    key = await _require_owned_key(callback, key_id)
-    if not key or region not in {'ru', 'global'}:
+    parsed = parse_happ_callback(callback.data)
+    if not parsed:
+        await callback.answer('Некорректный шаг настройки', show_alert=True)
         return
+    platform, distribution, key_id = parsed
+    key = await _require_owned_key(callback, key_id)
+    page_key = HAPP_CONNECTION_PAGES.get(platform)
+    if not key or not page_key:
+        return
+
+    fallback_text = {
+        'ios': branding.ONBOARDING_HAPP_CONNECTION_TEXT,
+        'android': branding.ONBOARDING_HAPP_CONNECTION_ANDROID_TEXT,
+        'windows': branding.ONBOARDING_HAPP_CONNECTION_WINDOWS_TEXT,
+        'macos': branding.ONBOARDING_HAPP_CONNECTION_MACOS_TEXT,
+    }[platform]
 
     context = {
         'key_id': key_id,
-        'platform': 'ios',
+        'platform': platform,
         'app': 'happ',
-        'region': region,
+        'region': distribution if platform == 'ios' else None,
+        'distribution': distribution,
         'connection_variant': 'alternative',
     }
     await callback.answer()
@@ -340,16 +396,17 @@ async def onboarding_happ_connection_handler(callback: CallbackQuery):
         callback,
         key,
         key_manage_markup=build_page_keyboard(
-            'onboarding_happ_connection',
+            page_key,
             context=context,
         ),
         is_new=False,
-        page_key='onboarding_happ_connection',
-        fallback_text=ONBOARDING_HAPP_CONNECTION_TEXT,
+        page_key=page_key,
+        fallback_text=fallback_text,
         use_page_markup=True,
-        onboarding_platform='ios',
+        onboarding_platform=platform,
         onboarding_app='happ',
-        onboarding_region=region,
+        onboarding_region=distribution if platform == 'ios' else None,
+        onboarding_distribution=distribution,
     )
 
 
@@ -357,9 +414,12 @@ async def onboarding_happ_connection_handler(callback: CallbackQuery):
 async def onboarding_happ_help_handler(callback: CallbackQuery):
     from bot.utils.page_renderer import render_page
 
-    _, region, raw_key_id = callback.data.split(':', 2)
-    key_id = int(raw_key_id)
-    if region not in {'ru', 'global'} or not await _require_owned_key(callback, key_id):
+    parsed = parse_happ_callback(callback.data)
+    if not parsed:
+        await callback.answer('Некорректный шаг настройки', show_alert=True)
+        return
+    platform, distribution, key_id = parsed
+    if not await _require_owned_key(callback, key_id):
         return
 
     await callback.answer()
@@ -368,10 +428,11 @@ async def onboarding_happ_help_handler(callback: CallbackQuery):
         page_key='onboarding_troubleshoot',
         context={
             'key_id': key_id,
-            'platform': 'ios',
+            'platform': platform,
             'connection_variant': 'alternative',
             'app': 'happ',
-            'region': region,
+            'region': distribution if platform == 'ios' else None,
+            'distribution': distribution,
         },
     )
 
@@ -380,9 +441,12 @@ async def onboarding_happ_help_handler(callback: CallbackQuery):
 async def onboarding_happ_done_handler(callback: CallbackQuery):
     from bot.utils.page_renderer import render_page
 
-    _, region, raw_key_id = callback.data.split(':', 2)
-    key_id = int(raw_key_id)
-    if region not in {'ru', 'global'} or not await _require_owned_key(callback, key_id):
+    parsed = parse_happ_callback(callback.data)
+    if not parsed:
+        await callback.answer('Некорректный шаг настройки', show_alert=True)
+        return
+    platform, distribution, key_id = parsed
+    if not await _require_owned_key(callback, key_id):
         return
 
     await callback.answer()
@@ -391,10 +455,11 @@ async def onboarding_happ_done_handler(callback: CallbackQuery):
         page_key='onboarding_success',
         context={
             'key_id': key_id,
-            'platform': 'ios',
+            'platform': platform,
             'connection_variant': 'alternative',
             'app': 'happ',
-            'region': region,
+            'region': distribution if platform == 'ios' else None,
+            'distribution': distribution,
         },
     )
 
@@ -470,7 +535,10 @@ async def onboarding_issue_handler(callback: CallbackQuery):
         not page_key
         or variant not in {'primary', 'alt', 'happ'}
         or platform not in PLATFORM_PAGES
-        or (variant == 'happ' and region not in {'ru', 'global'})
+        or (
+            variant == 'happ'
+            and region not in HAPP_DISTRIBUTIONS.get(platform, set())
+        )
         or not await _require_owned_key(callback, key_id)
     ):
         return
@@ -479,7 +547,11 @@ async def onboarding_issue_handler(callback: CallbackQuery):
     if variant in {'alt', 'happ'}:
         context['connection_variant'] = 'alternative'
     if variant == 'happ':
-        context.update({'app': 'happ', 'region': region})
+        context.update({
+            'app': 'happ',
+            'region': region if platform == 'ios' else None,
+            'distribution': region,
+        })
 
     await callback.answer()
     await render_page(callback, page_key=page_key, context=context)

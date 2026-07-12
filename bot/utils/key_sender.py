@@ -25,6 +25,7 @@ KEY_DELIVERY_CONTEXT_KEY_ID = 'key_delivery_key_id'
 KEY_DELIVERY_CONTEXT_PLATFORM = 'key_delivery_platform'
 KEY_DELIVERY_CONTEXT_APP = 'key_delivery_app'
 KEY_DELIVERY_CONTEXT_REGION = 'key_delivery_region'
+KEY_DELIVERY_CONTEXT_DISTRIBUTION = 'key_delivery_distribution'
 
 
 # Дефолтный текст выдачи ключа в формате HTML
@@ -149,8 +150,11 @@ def _build_key_delivery_caption(
         'onboarding_connection',
         'onboarding_connection_alternative',
         'onboarding_happ_connection',
+        'onboarding_happ_connection_android',
+        'onboarding_happ_connection_windows',
+        'onboarding_happ_connection_macos',
     }:
-        if page_key == 'onboarding_happ_connection':
+        if page_key.startswith('onboarding_happ_connection'):
             compact = (
                 "🔗 <b>Добавьте подключение в HAPP</b>\n\n"
                 f"{format_key_copy_value(raw_value)}\n\n"
@@ -239,6 +243,7 @@ def _remember_key_delivery_context(
     platform: Optional[str],
     app: Optional[str],
     region: Optional[str],
+    distribution: Optional[str],
 ) -> None:
     """Запоминает страницу выдачи ключа для контекстной команды /yaa."""
     if not viewer_id:
@@ -265,6 +270,7 @@ def _remember_key_delivery_context(
                 KEY_DELIVERY_CONTEXT_PLATFORM: platform,
                 KEY_DELIVERY_CONTEXT_APP: app,
                 KEY_DELIVERY_CONTEXT_REGION: region,
+                KEY_DELIVERY_CONTEXT_DISTRIBUTION: distribution,
             },
             text_replacements=build_key_delivery_replacements(raw_value),
         )
@@ -287,6 +293,7 @@ async def render_key_delivery_page(
     platform: Optional[str] = None,
     app: Optional[str] = None,
     region: Optional[str] = None,
+    distribution: Optional[str] = None,
 ) -> Message:
     """Рендерит специальную страницу выдачи ключа с QR и запоминает её для /yaa."""
     target_message = _get_target_message(messageable)
@@ -303,6 +310,7 @@ async def render_key_delivery_page(
                 'platform': platform,
                 'app': app,
                 'region': region,
+                'distribution': distribution,
                 'connection_variant': 'alternative' if app else None,
             },
         )
@@ -330,6 +338,7 @@ async def render_key_delivery_page(
         platform=platform,
         app=app,
         region=region,
+        distribution=distribution,
     )
     return rendered_message
 
@@ -346,8 +355,9 @@ async def rerender_key_delivery_page_context(page_context, viewer_id: int) -> bo
     platform = context.get(KEY_DELIVERY_CONTEXT_PLATFORM)
     app = context.get(KEY_DELIVERY_CONTEXT_APP)
     region = context.get(KEY_DELIVERY_CONTEXT_REGION)
+    distribution = context.get(KEY_DELIVERY_CONTEXT_DISTRIBUTION)
     key_manage_markup = None
-    is_happ = page_context.page_key == 'onboarding_happ_connection'
+    is_happ = page_context.page_key.startswith('onboarding_happ_connection')
     is_alternative = page_context.page_key == 'onboarding_connection_alternative'
     if not use_page_markup and key_id and platform:
         from bot.handlers.user.onboarding import onboarding_connection_kb
@@ -368,9 +378,14 @@ async def rerender_key_delivery_page_context(page_context, viewer_id: int) -> bo
 
         fallback_text = ONBOARDING_CONNECTION_ALTERNATIVE_TEXT
     elif is_happ:
-        from bot.services.branding import ONBOARDING_HAPP_CONNECTION_TEXT
+        from bot.services import branding
 
-        fallback_text = ONBOARDING_HAPP_CONNECTION_TEXT
+        fallback_text = {
+            'onboarding_happ_connection': branding.ONBOARDING_HAPP_CONNECTION_TEXT,
+            'onboarding_happ_connection_android': branding.ONBOARDING_HAPP_CONNECTION_ANDROID_TEXT,
+            'onboarding_happ_connection_windows': branding.ONBOARDING_HAPP_CONNECTION_WINDOWS_TEXT,
+            'onboarding_happ_connection_macos': branding.ONBOARDING_HAPP_CONNECTION_MACOS_TEXT,
+        }.get(page_context.page_key, branding.ONBOARDING_HAPP_CONNECTION_TEXT)
 
     await render_key_delivery_page(
         page_context.message,
@@ -387,6 +402,7 @@ async def rerender_key_delivery_page_context(page_context, viewer_id: int) -> bo
         platform=str(platform) if platform else None,
         app=str(app) if app else None,
         region=str(region) if region else None,
+        distribution=str(distribution) if distribution else None,
     )
     return True
 
@@ -402,6 +418,7 @@ async def send_key_with_qr(
     onboarding_platform: Optional[str] = None,
     onboarding_app: Optional[str] = None,
     onboarding_region: Optional[str] = None,
+    onboarding_distribution: Optional[str] = None,
 ):
     """
     Отправляет пользователю ключ с QR-кодом и файлом конфигурации.
@@ -450,6 +467,7 @@ async def send_key_with_qr(
                 platform=onboarding_platform,
                 app=onboarding_app,
                 region=onboarding_region,
+                distribution=onboarding_distribution,
             )
             return
 
@@ -498,6 +516,7 @@ async def send_key_with_qr(
             platform=onboarding_platform,
             app=onboarding_app,
             region=onboarding_region,
+            distribution=onboarding_distribution,
         )
 
         # 4. Отправляем JSON конфиг файлом

@@ -34,6 +34,12 @@ Open a page as an administrator and send `/yaa`:
 - `onboarding_happ_install_ru`
 - `onboarding_happ_install_global`
 - `onboarding_happ_connection`
+- `onboarding_happ_install_android`
+- `onboarding_happ_install_windows`
+- `onboarding_happ_install_macos`
+- `onboarding_happ_connection_android`
+- `onboarding_happ_connection_windows`
+- `onboarding_happ_connection_macos`
 - `onboarding_troubleshoot`
 - `onboarding_issue_enable`
 - `onboarding_issue_no_traffic`
@@ -70,6 +76,12 @@ Existing `/yaa` custom text and media are not overwritten at startup.
     region guide. Every Back action must remain inside the guided setup.
 16. Import a subscription into both HAPP builds, then test VLESS/XHTTP on Wi-Fi
     and mobile data, subscription refresh, and an application restart.
+17. Repeat the HAPP-first alternative flow on Android, Windows, and macOS.
+    Verify Google Play/APK, Windows EXE/Releases, and macOS DMG/Releases.
+18. Open `Other applications` on each platform and confirm that HAPP is not
+    duplicated there and Back returns to the platform's HAPP installation.
+19. Verify platform-specific HAPP QR instructions, troubleshooting, retry,
+    success, and `/yaa` persistence for both subscription and one-time keys.
 
 ## Rollback
 

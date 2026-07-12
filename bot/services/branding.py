@@ -25,6 +25,11 @@ REFUND_POLICY_URL = "https://telegra.ph/Pravila-vozvrata-denezhnyh-sredstv-WaveM
 HAPP_URL = "https://happ.info/"
 HAPP_IOS_GLOBAL_URL = "https://apps.apple.com/app/id6504287215"
 HAPP_IOS_RU_URL = "https://apps.apple.com/app/id6783623643"
+HAPP_ANDROID_GOOGLE_PLAY_URL = "https://play.google.com/store/apps/details?id=com.happproxy"
+HAPP_ANDROID_APK_URL = "https://github.com/Happ-proxy/happ-android/releases/latest/download/Happ.apk"
+HAPP_DESKTOP_RELEASES_URL = "https://github.com/Happ-proxy/happ-desktop/releases/latest"
+HAPP_WINDOWS_URL = "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe"
+HAPP_MACOS_URL = "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.macOS.universal.dmg"
 STREISAND_IOS_URL = "https://apps.apple.com/us/app/streisand/id6450534064"
 V2BOX_IOS_URL = "https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690"
 HIDDIFY_URL = "https://hiddify.com/"
@@ -187,48 +192,128 @@ ONBOARDING_HAPP_CONNECTION_BUTTONS = json.dumps(
     ensure_ascii=False,
 )
 
+
+def _onboarding_happ_platform_install_text(platform_name: str) -> str:
+    return (
+        f"📲 <b>Установите HAPP · {platform_name}</b>\n\n"
+        "Используйте основную кнопку установки. Если загрузка недоступна, "
+        "откройте запасной официальный источник.\n\n"
+        "Когда HAPP установится, вернитесь в бот и нажмите "
+        "«Приложение установлено»."
+    )
+
+
+def _onboarding_happ_platform_install_buttons(
+    primary_label: str,
+    primary_url: str,
+    backup_label: str,
+    backup_url: str,
+) -> str:
+    return json.dumps(
+        [
+            {"id": "btn_onboarding_happ_install", "label": primary_label, "color": "primary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": primary_url},
+            {"id": "btn_onboarding_happ_backup", "label": backup_label, "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": backup_url},
+            {"id": "btn_onboarding_happ_continue", "label": "✅ Приложение установлено", "color": "success", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+            {"id": "btn_onboarding_happ_other", "label": "Другие приложения", "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+            {"id": "btn_onboarding_happ_back_primary", "label": "⬅️ Назад", "color": "secondary", "row": 4, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        ],
+        ensure_ascii=False,
+    )
+
+
+ONBOARDING_HAPP_INSTALL_ANDROID_TEXT = _onboarding_happ_platform_install_text("Android")
+ONBOARDING_HAPP_INSTALL_WINDOWS_TEXT = _onboarding_happ_platform_install_text("Windows")
+ONBOARDING_HAPP_INSTALL_MACOS_TEXT = _onboarding_happ_platform_install_text("macOS")
+ONBOARDING_HAPP_INSTALL_ANDROID_BUTTONS = _onboarding_happ_platform_install_buttons(
+    "▶️ Установить из Google Play",
+    HAPP_ANDROID_GOOGLE_PLAY_URL,
+    "📦 Скачать APK",
+    HAPP_ANDROID_APK_URL,
+)
+ONBOARDING_HAPP_INSTALL_WINDOWS_BUTTONS = _onboarding_happ_platform_install_buttons(
+    "⬇️ Скачать HAPP для Windows",
+    HAPP_WINDOWS_URL,
+    "📋 Открыть страницу релизов",
+    HAPP_DESKTOP_RELEASES_URL,
+)
+ONBOARDING_HAPP_INSTALL_MACOS_BUTTONS = _onboarding_happ_platform_install_buttons(
+    "⬇️ Скачать HAPP для macOS",
+    HAPP_MACOS_URL,
+    "📋 Открыть страницу релизов",
+    HAPP_DESKTOP_RELEASES_URL,
+)
+
+
+def _onboarding_happ_connection_text(platform_name: str, import_hint: str) -> str:
+    return (
+        f"🔗 <b>Шаг 2 из 3 · HAPP на {platform_name}</b>\n\n"
+        "1. Нажмите на ссылку ниже, чтобы скопировать её:\n"
+        "%ключ%\n\n"
+        f"2. {import_hint}\n"
+        "3. Импортируйте ссылку из буфера обмена.\n\n"
+        "QR-код выше можно использовать, если на устройстве доступно сканирование.\n\n"
+        "После добавления выберите подключение и включите VPN."
+    )
+
+
+ONBOARDING_HAPP_CONNECTION_ANDROID_TEXT = _onboarding_happ_connection_text(
+    "Android",
+    "Откройте HAPP и выберите добавление или импорт подписки",
+)
+ONBOARDING_HAPP_CONNECTION_WINDOWS_TEXT = _onboarding_happ_connection_text(
+    "Windows",
+    "Откройте HAPP и добавьте новую подписку или конфигурацию",
+)
+ONBOARDING_HAPP_CONNECTION_MACOS_TEXT = _onboarding_happ_connection_text(
+    "macOS",
+    "Откройте HAPP и добавьте новую подписку или конфигурацию",
+)
+
 DOWNLOAD_ANDROID_TEXT = (
-    "🤖 <b>Android</b>\n\n"
-    "Для Android подойдут Happ, v2rayNG или Hiddify.\n\n"
+    "🤖 <b>Android · другие приложения</b>\n\n"
+    "Если HAPP не подошёл, можно использовать v2rayNG или Hiddify.\n\n"
     "После установки приложения скопируйте ключ в боте и импортируйте его в клиент."
 )
 
 DOWNLOAD_ANDROID_BUTTONS = json.dumps(
     [
-        {"id": "btn_happ_android",       "label": "Happ",            "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HAPP_URL},
-        {"id": "btn_v2rayng_android",    "label": "v2rayNG",         "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": V2RAYNG_RELEASES_URL},
-        {"id": "btn_hiddify_android",    "label": "Hiddify",         "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HIDDIFY_URL},
-        {"id": "btn_back_downloads",     "label": "⬅️ Назад",        "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
+        {"id": "btn_v2rayng_android",    "label": "v2rayNG",         "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": V2RAYNG_RELEASES_URL},
+        {"id": "btn_hiddify_android",    "label": "Hiddify",         "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": HIDDIFY_URL},
+        {"id": "btn_onboarding_alt_continue_android", "label": "✅ Приложение установлено", "color": "success", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_alt_other_back", "label": "⬅️ Назад", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_back_downloads",     "label": "⬅️ Назад",        "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
     ],
     ensure_ascii=False,
 )
 
 DOWNLOAD_WINDOWS_TEXT = (
-    "💻 <b>Windows</b>\n\n"
-    "Для Windows рекомендуем Happ или Hiddify.\n\n"
+    "💻 <b>Windows · другие приложения</b>\n\n"
+    "Если HAPP не подошёл, можно использовать Hiddify.\n\n"
     "Скачивайте приложение только с официального сайта или страницы релизов проекта."
 )
 
 DOWNLOAD_WINDOWS_BUTTONS = json.dumps(
     [
-        {"id": "btn_happ_windows",       "label": "Happ",             "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HAPP_URL},
-        {"id": "btn_hiddify_windows",    "label": "Hiddify Releases", "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": HIDDIFY_RELEASES_URL},
-        {"id": "btn_back_downloads",     "label": "⬅️ Назад",         "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
+        {"id": "btn_hiddify_windows",    "label": "Hiddify Releases", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HIDDIFY_RELEASES_URL},
+        {"id": "btn_onboarding_alt_continue_windows", "label": "✅ Приложение установлено", "color": "success", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_alt_other_back", "label": "⬅️ Назад", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_back_downloads",     "label": "⬅️ Назад",         "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
     ],
     ensure_ascii=False,
 )
 
 DOWNLOAD_MACOS_TEXT = (
-    "🖥 <b>macOS</b>\n\n"
-    "Для macOS рекомендуем Happ или Hiddify.\n\n"
+    "🖥 <b>macOS · другие приложения</b>\n\n"
+    "Если HAPP не подошёл, можно использовать Hiddify.\n\n"
     "Скачивайте приложение только с официального сайта или страницы релизов проекта."
 )
 
 DOWNLOAD_MACOS_BUTTONS = json.dumps(
     [
-        {"id": "btn_happ_macos",         "label": "Happ",             "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HAPP_URL},
-        {"id": "btn_hiddify_macos",      "label": "Hiddify Releases", "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": HIDDIFY_RELEASES_URL},
-        {"id": "btn_back_downloads",     "label": "⬅️ Назад",         "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
+        {"id": "btn_hiddify_macos",      "label": "Hiddify Releases", "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HIDDIFY_RELEASES_URL},
+        {"id": "btn_onboarding_alt_continue_macos", "label": "✅ Приложение установлено", "color": "success", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_alt_other_back", "label": "⬅️ Назад", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_back_downloads",     "label": "⬅️ Назад",         "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
     ],
     ensure_ascii=False,
 )
@@ -514,6 +599,12 @@ PAGE_DEFAULTS = {
     "onboarding_happ_install_ru": (ONBOARDING_HAPP_INSTALL_RU_TEXT, ONBOARDING_HAPP_INSTALL_RU_BUTTONS, None, None),
     "onboarding_happ_install_global": (ONBOARDING_HAPP_INSTALL_GLOBAL_TEXT, ONBOARDING_HAPP_INSTALL_GLOBAL_BUTTONS, None, None),
     "onboarding_happ_connection": (ONBOARDING_HAPP_CONNECTION_TEXT, ONBOARDING_HAPP_CONNECTION_BUTTONS, None, None),
+    "onboarding_happ_install_android": (ONBOARDING_HAPP_INSTALL_ANDROID_TEXT, ONBOARDING_HAPP_INSTALL_ANDROID_BUTTONS, None, None),
+    "onboarding_happ_install_windows": (ONBOARDING_HAPP_INSTALL_WINDOWS_TEXT, ONBOARDING_HAPP_INSTALL_WINDOWS_BUTTONS, None, None),
+    "onboarding_happ_install_macos": (ONBOARDING_HAPP_INSTALL_MACOS_TEXT, ONBOARDING_HAPP_INSTALL_MACOS_BUTTONS, None, None),
+    "onboarding_happ_connection_android": (ONBOARDING_HAPP_CONNECTION_ANDROID_TEXT, ONBOARDING_HAPP_CONNECTION_BUTTONS, None, None),
+    "onboarding_happ_connection_windows": (ONBOARDING_HAPP_CONNECTION_WINDOWS_TEXT, ONBOARDING_HAPP_CONNECTION_BUTTONS, None, None),
+    "onboarding_happ_connection_macos": (ONBOARDING_HAPP_CONNECTION_MACOS_TEXT, ONBOARDING_HAPP_CONNECTION_BUTTONS, None, None),
     "onboarding_troubleshoot": (ONBOARDING_TROUBLESHOOT_TEXT, ONBOARDING_TROUBLESHOOT_BUTTONS, None, None),
     "onboarding_issue_enable": (ONBOARDING_ISSUE_ENABLE_TEXT, ONBOARDING_ISSUE_ENABLE_BUTTONS, None, None),
     "onboarding_issue_no_traffic": (ONBOARDING_ISSUE_NO_TRAFFIC_TEXT, ONBOARDING_ISSUE_NO_TRAFFIC_BUTTONS, None, None),
@@ -695,9 +786,32 @@ def _migrate_download_ios_happ_flow(
     page_key: str,
     buttons_json: str | None,
 ) -> str | None:
-    """Remove the legacy HAPP link and add onboarding-aware fallback actions."""
-    if page_key != "download_ios" or not buttons_json:
+    """Remove legacy HAPP links and add onboarding-aware fallback actions."""
+    page_config = {
+        "download_ios": (
+            "btn_happ_ios",
+            DOWNLOAD_IOS_BUTTONS,
+            "btn_onboarding_alt_continue_ios",
+        ),
+        "download_android": (
+            "btn_happ_android",
+            DOWNLOAD_ANDROID_BUTTONS,
+            "btn_onboarding_alt_continue_android",
+        ),
+        "download_windows": (
+            "btn_happ_windows",
+            DOWNLOAD_WINDOWS_BUTTONS,
+            "btn_onboarding_alt_continue_windows",
+        ),
+        "download_macos": (
+            "btn_happ_macos",
+            DOWNLOAD_MACOS_BUTTONS,
+            "btn_onboarding_alt_continue_macos",
+        ),
+    }.get(page_key)
+    if not page_config or not buttons_json:
         return buttons_json
+    legacy_happ_id, default_buttons_json, continue_id = page_config
 
     try:
         buttons = json.loads(buttons_json)
@@ -706,27 +820,45 @@ def _migrate_download_ios_happ_flow(
     if not isinstance(buttons, list):
         return buttons_json
 
+    changed = any(
+        isinstance(button, dict) and button.get("id") == legacy_happ_id
+        for button in buttons
+    )
+    buttons = [
+        button
+        for button in buttons
+        if not isinstance(button, dict) or button.get("id") != legacy_happ_id
+    ]
+    defaults = json.loads(default_buttons_json)
+    defaults_by_id = {button.get("id"): button for button in defaults}
+    for button in buttons:
+        if not isinstance(button, dict):
+            continue
+        default = defaults_by_id.get(button.get("id"))
+        if not default:
+            continue
+        for field in ("row", "col"):
+            if button.get(field) != default.get(field):
+                button[field] = default.get(field)
+                changed = True
+
+    required_ids = {
+        continue_id,
+        "btn_onboarding_alt_other_back",
+    }
     existing_ids = {
         button.get("id")
         for button in buttons
         if isinstance(button, dict)
     }
-    if "btn_happ_ios" not in existing_ids:
+    missing_required = required_ids - existing_ids
+    if missing_required:
+        buttons.extend(
+            button for button in defaults if button.get("id") in missing_required
+        )
+        changed = True
+    if not changed:
         return buttons_json
-
-    buttons = [
-        button
-        for button in buttons
-        if not isinstance(button, dict) or button.get("id") != "btn_happ_ios"
-    ]
-    defaults = json.loads(DOWNLOAD_IOS_BUTTONS)
-    required_ids = {
-        "btn_onboarding_alt_continue_ios",
-        "btn_onboarding_alt_other_back",
-    }
-    buttons.extend(
-        button for button in defaults if button.get("id") in required_ids
-    )
     return json.dumps(buttons, ensure_ascii=False)
 
 
@@ -783,11 +915,20 @@ def _migrate_download_ios_happ_text(
     page_key: str,
     text_custom: str | None,
 ) -> str | None:
-    """Replace only the known legacy copy that recommends HAPP in the fallback list."""
-    if page_key != "download_ios" or not text_custom:
+    """Replace only known legacy copy that recommends HAPP in fallback lists."""
+    if not text_custom:
         return text_custom
-    if "Happ, Streisand" in text_custom or "HAPP, Streisand" in text_custom:
-        return DOWNLOAD_IOS_TEXT
+    page_config = {
+        "download_ios": (DOWNLOAD_IOS_TEXT, ("Happ, Streisand", "HAPP, Streisand")),
+        "download_android": (DOWNLOAD_ANDROID_TEXT, ("Happ, v2rayNG", "HAPP, v2rayNG")),
+        "download_windows": (DOWNLOAD_WINDOWS_TEXT, ("Happ или Hiddify", "HAPP или Hiddify")),
+        "download_macos": (DOWNLOAD_MACOS_TEXT, ("Happ или Hiddify", "HAPP или Hiddify")),
+    }.get(page_key)
+    if not page_config:
+        return text_custom
+    replacement, markers = page_config
+    if any(marker in text_custom for marker in markers):
+        return replacement
     return text_custom
 
 
