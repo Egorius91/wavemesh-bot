@@ -23,6 +23,8 @@ USER_AGREEMENT_URL = "https://telegra.ph/Polzovatelskoe-soglashenie-WaveMesh-VPN
 REFUND_POLICY_URL = "https://telegra.ph/Pravila-vozvrata-denezhnyh-sredstv-WaveMesh-VPN-07-01"
 
 HAPP_URL = "https://happ.info/"
+HAPP_IOS_GLOBAL_URL = "https://apps.apple.com/app/id6504287215"
+HAPP_IOS_RU_URL = "https://apps.apple.com/app/id6783623643"
 STREISAND_IOS_URL = "https://apps.apple.com/us/app/streisand/id6450534064"
 V2BOX_IOS_URL = "https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690"
 HIDDIFY_URL = "https://hiddify.com/"
@@ -91,19 +93,96 @@ DOWNLOAD_CLIENTS_BUTTONS = json.dumps(
 )
 
 DOWNLOAD_IOS_TEXT = (
-    "🍎 <b>iPhone / iPad</b>\n\n"
-    "Для устройств Apple можно использовать Happ, Streisand или V2Box.\n\n"
+    "🍎 <b>iPhone / iPad · другие приложения</b>\n\n"
+    "Если HAPP недоступен, можно использовать Streisand или V2Box.\n\n"
     "Если приложение не отображается в App Store, проверьте регион Apple ID. "
     "Нажмите кнопку ниже, чтобы открыть подробную инструкцию."
 )
 
 DOWNLOAD_IOS_BUTTONS = json.dumps(
     [
-        {"id": "btn_happ_ios",          "label": "Happ",                         "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": HAPP_URL},
-        {"id": "btn_streisand_ios",     "label": "Streisand",                    "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": STREISAND_IOS_URL},
-        {"id": "btn_v2box_ios",         "label": "V2Box",                        "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": V2BOX_IOS_URL},
-        {"id": "btn_appstore_region",   "label": "🍏 Как изменить регион App Store", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "url", "action_value": APP_STORE_REGION_GUIDE_URL},
-        {"id": "btn_back_downloads",    "label": "⬅️ Назад",                     "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
+        {"id": "btn_streisand_ios",     "label": "Streisand",                    "color": "secondary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": STREISAND_IOS_URL},
+        {"id": "btn_v2box_ios",         "label": "V2Box",                        "color": "secondary", "row": 0, "col": 1, "is_hidden": False, "action_type": "url", "action_value": V2BOX_IOS_URL},
+        {"id": "btn_appstore_region",   "label": "🍏 Как изменить регион App Store", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": APP_STORE_REGION_GUIDE_URL},
+        {"id": "btn_onboarding_alt_continue_ios", "label": "✅ Приложение установлено", "color": "success", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_alt_other_back", "label": "⬅️ Назад",              "color": "secondary", "row": 3, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_back_downloads",    "label": "⬅️ Назад",                     "color": "secondary", "row": 4, "col": 0, "is_hidden": False, "action_type": "internal", "action_value": "cmd_download_clients"},
+    ],
+    ensure_ascii=False,
+)
+
+ONBOARDING_HAPP_REGION_TEXT = (
+    "🍎 <b>HAPP для iPhone / iPad</b>\n\n"
+    "У HAPP разные версии для российского и других регионов App Store. "
+    "Выберите регион, который указан в вашем Apple ID."
+)
+
+ONBOARDING_HAPP_REGION_BUTTONS = json.dumps(
+    [
+        {"id": "btn_onboarding_happ_ru", "label": "🇷🇺 Россия", "color": "primary", "row": 0, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_happ_global", "label": "🌍 Другой регион", "color": "primary", "row": 0, "col": 1, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_happ_other", "label": "Другие приложения", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_happ_back_primary", "label": "⬅️ Назад", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+    ],
+    ensure_ascii=False,
+)
+
+
+def _onboarding_happ_install_text(region_name: str) -> str:
+    return (
+        f"📲 <b>Установите HAPP · {region_name}</b>\n\n"
+        "Кнопка ниже откроет нужную версию приложения в App Store.\n\n"
+        "Когда HAPP установится, вернитесь в бот и нажмите "
+        "«Приложение установлено»."
+    )
+
+
+def _onboarding_happ_install_buttons(install_url: str, *, include_global: bool) -> str:
+    buttons = [
+        {"id": "btn_onboarding_happ_install", "label": "⬇️ Установить HAPP", "color": "primary", "row": 0, "col": 0, "is_hidden": False, "action_type": "url", "action_value": install_url},
+        {"id": "btn_onboarding_happ_continue", "label": "✅ Приложение установлено", "color": "success", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+    ]
+    next_row = 2
+    if include_global:
+        buttons.append(
+            {"id": "btn_onboarding_happ_global", "label": "🌍 Открыть HAPP Global", "color": "secondary", "row": next_row, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None}
+        )
+        next_row += 1
+    buttons.extend([
+        {"id": "btn_onboarding_happ_other", "label": "Другие приложения", "color": "secondary", "row": next_row, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_appstore_region", "label": "🍏 Как изменить регион App Store", "color": "secondary", "row": next_row + 1, "col": 0, "is_hidden": False, "action_type": "url", "action_value": APP_STORE_REGION_GUIDE_URL},
+        {"id": "btn_onboarding_happ_back_region", "label": "⬅️ Назад", "color": "secondary", "row": next_row + 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+    ])
+    return json.dumps(buttons, ensure_ascii=False)
+
+
+ONBOARDING_HAPP_INSTALL_RU_TEXT = _onboarding_happ_install_text("Россия")
+ONBOARDING_HAPP_INSTALL_GLOBAL_TEXT = _onboarding_happ_install_text("другой регион")
+ONBOARDING_HAPP_INSTALL_RU_BUTTONS = _onboarding_happ_install_buttons(
+    HAPP_IOS_RU_URL,
+    include_global=True,
+)
+ONBOARDING_HAPP_INSTALL_GLOBAL_BUTTONS = _onboarding_happ_install_buttons(
+    HAPP_IOS_GLOBAL_URL,
+    include_global=False,
+)
+
+ONBOARDING_HAPP_CONNECTION_TEXT = (
+    "🔗 <b>Шаг 2 из 3 · Добавьте подключение в HAPP</b>\n\n"
+    "1. Нажмите на ссылку ниже, чтобы скопировать её:\n"
+    "%ключ%\n\n"
+    "2. Откройте HAPP и выберите добавление или импорт подключения.\n"
+    "3. Импортируйте ссылку из буфера обмена. Название команды может немного "
+    "отличаться в версиях RU и Global.\n\n"
+    "Также можно открыть сканер QR-кода в HAPP и отсканировать изображение выше.\n\n"
+    "После добавления выберите подключение и включите VPN."
+)
+
+ONBOARDING_HAPP_CONNECTION_BUTTONS = json.dumps(
+    [
+        {"id": "btn_onboarding_happ_done", "label": "✅ VPN включён", "color": "success", "row": 0, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_happ_help", "label": "🧰 Не получается", "color": "secondary", "row": 1, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
+        {"id": "btn_onboarding_happ_back_install", "label": "⬅️ Назад", "color": "secondary", "row": 2, "col": 0, "is_hidden": False, "action_type": "system", "action_value": None},
     ],
     ensure_ascii=False,
 )
@@ -431,6 +510,10 @@ PAGE_DEFAULTS = {
     "onboarding_macos": (ONBOARDING_MACOS_TEXT, ONBOARDING_MACOS_BUTTONS, None, None),
     "onboarding_connection": (ONBOARDING_CONNECTION_TEXT, None, None, None),
     "onboarding_connection_alternative": (ONBOARDING_CONNECTION_ALTERNATIVE_TEXT, None, None, None),
+    "onboarding_happ_region": (ONBOARDING_HAPP_REGION_TEXT, ONBOARDING_HAPP_REGION_BUTTONS, None, None),
+    "onboarding_happ_install_ru": (ONBOARDING_HAPP_INSTALL_RU_TEXT, ONBOARDING_HAPP_INSTALL_RU_BUTTONS, None, None),
+    "onboarding_happ_install_global": (ONBOARDING_HAPP_INSTALL_GLOBAL_TEXT, ONBOARDING_HAPP_INSTALL_GLOBAL_BUTTONS, None, None),
+    "onboarding_happ_connection": (ONBOARDING_HAPP_CONNECTION_TEXT, ONBOARDING_HAPP_CONNECTION_BUTTONS, None, None),
     "onboarding_troubleshoot": (ONBOARDING_TROUBLESHOOT_TEXT, ONBOARDING_TROUBLESHOOT_BUTTONS, None, None),
     "onboarding_issue_enable": (ONBOARDING_ISSUE_ENABLE_TEXT, ONBOARDING_ISSUE_ENABLE_BUTTONS, None, None),
     "onboarding_issue_no_traffic": (ONBOARDING_ISSUE_NO_TRAFFIC_TEXT, ONBOARDING_ISSUE_NO_TRAFFIC_BUTTONS, None, None),
@@ -608,6 +691,45 @@ def _migrate_onboarding_troubleshoot_buttons(
     return json.dumps(buttons, ensure_ascii=False)
 
 
+def _migrate_download_ios_happ_flow(
+    page_key: str,
+    buttons_json: str | None,
+) -> str | None:
+    """Remove the legacy HAPP link and add onboarding-aware fallback actions."""
+    if page_key != "download_ios" or not buttons_json:
+        return buttons_json
+
+    try:
+        buttons = json.loads(buttons_json)
+    except (TypeError, json.JSONDecodeError):
+        return buttons_json
+    if not isinstance(buttons, list):
+        return buttons_json
+
+    existing_ids = {
+        button.get("id")
+        for button in buttons
+        if isinstance(button, dict)
+    }
+    if "btn_happ_ios" not in existing_ids:
+        return buttons_json
+
+    buttons = [
+        button
+        for button in buttons
+        if not isinstance(button, dict) or button.get("id") != "btn_happ_ios"
+    ]
+    defaults = json.loads(DOWNLOAD_IOS_BUTTONS)
+    required_ids = {
+        "btn_onboarding_alt_continue_ios",
+        "btn_onboarding_alt_other_back",
+    }
+    buttons.extend(
+        button for button in defaults if button.get("id") in required_ids
+    )
+    return json.dumps(buttons, ensure_ascii=False)
+
+
 def _migrate_help_onboarding_button(page_key: str, buttons_json: str | None) -> str | None:
     """Replace the legacy client-download entry with the guided setup entry."""
     if page_key != "help" or not buttons_json:
@@ -654,6 +776,18 @@ def _migrate_help_onboarding_text(page_key: str, text_custom: str | None) -> str
     )
     if any(marker in text_custom for marker in legacy_help_markers):
         return HELP_TEXT
+    return text_custom
+
+
+def _migrate_download_ios_happ_text(
+    page_key: str,
+    text_custom: str | None,
+) -> str | None:
+    """Replace only the known legacy copy that recommends HAPP in the fallback list."""
+    if page_key != "download_ios" or not text_custom:
+        return text_custom
+    if "Happ, Streisand" in text_custom or "HAPP, Streisand" in text_custom:
+        return DOWNLOAD_IOS_TEXT
     return text_custom
 
 
@@ -716,8 +850,16 @@ def _update_page(
             page_key,
             next_buttons_custom,
         )
+        next_buttons_custom = _migrate_download_ios_happ_flow(
+            page_key,
+            next_buttons_custom,
+        )
         next_buttons_custom = _migrate_help_onboarding_button(page_key, next_buttons_custom)
         next_text_custom = _migrate_help_onboarding_text(page_key, text_custom)
+        next_text_custom = _migrate_download_ios_happ_text(
+            page_key,
+            next_text_custom,
+        )
         next_text_custom = _migrate_onboarding_success_text(page_key, next_text_custom)
 
         update_custom_text = (

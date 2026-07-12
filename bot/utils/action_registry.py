@@ -327,6 +327,9 @@ def _resolve_onboarding_retry_install(ctx: dict) -> Optional[dict]:
     platform = _onboarding_platform(ctx)
     if not key_id or not platform:
         return None
+    if ctx.get('app') == 'happ':
+        region = str(ctx.get('region') or 'global')
+        return {'callback_data': f'onboarding_happ_install:{region}:{key_id}'}
     if ctx.get('connection_variant') == 'alternative':
         return {'callback_data': f'onboarding_alt:{platform}:{key_id}'}
     return {'callback_data': f'onboarding_platform:{platform}:{key_id}'}
@@ -337,6 +340,9 @@ def _resolve_onboarding_retry_connection(ctx: dict) -> Optional[dict]:
     platform = _onboarding_platform(ctx)
     if not key_id or not platform:
         return None
+    if ctx.get('app') == 'happ':
+        region = str(ctx.get('region') or 'global')
+        return {'callback_data': f'onboarding_happ_connection:{region}:{key_id}'}
     if ctx.get('connection_variant') == 'alternative':
         return {'callback_data': f'onboarding_connection_alt:{platform}:{key_id}'}
     return {'callback_data': f'onboarding_connection:{platform}:{key_id}'}
@@ -347,6 +353,9 @@ def _resolve_onboarding_problem(ctx: dict) -> Optional[dict]:
     platform = _onboarding_platform(ctx)
     if not key_id or not platform:
         return None
+    if ctx.get('app') == 'happ':
+        region = str(ctx.get('region') or 'global')
+        return {'callback_data': f'onboarding_happ_help:{region}:{key_id}'}
     if ctx.get('connection_variant') == 'alternative':
         return {'callback_data': f'onboarding_help_alt:{platform}:{key_id}'}
     return {'callback_data': f'onboarding_help:{platform}:{key_id}'}
@@ -358,6 +367,11 @@ def _onboarding_issue_button(issue: str) -> Callable[[dict], Optional[dict]]:
         platform = _onboarding_platform(ctx)
         if not key_id or not platform:
             return None
+        if ctx.get('app') == 'happ':
+            region = str(ctx.get('region') or 'global')
+            return {
+                'callback_data': f'onboarding_issue:{issue}:happ:ios:{region}:{key_id}'
+            }
         variant = 'alt' if ctx.get('connection_variant') == 'alternative' else 'primary'
         return {
             'callback_data': f'onboarding_issue:{issue}:{variant}:{platform}:{key_id}'
@@ -371,9 +385,72 @@ def _resolve_onboarding_troubleshoot_back(ctx: dict) -> Optional[dict]:
     platform = _onboarding_platform(ctx)
     if not key_id or not platform:
         return None
+    if ctx.get('app') == 'happ':
+        region = str(ctx.get('region') or 'global')
+        return {'callback_data': f'onboarding_happ_help:{region}:{key_id}'}
     if ctx.get('connection_variant') == 'alternative':
         return {'callback_data': f'onboarding_help_alt:{platform}:{key_id}'}
     return {'callback_data': f'onboarding_help:{platform}:{key_id}'}
+
+
+def _resolve_onboarding_happ_region(ctx: dict, region: str) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    return (
+        {'callback_data': f'onboarding_happ_install:{region}:{key_id}'}
+        if key_id else None
+    )
+
+
+def _resolve_onboarding_happ_other(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    return {'callback_data': f'onboarding_alt_other:ios:{key_id}'} if key_id else None
+
+
+def _resolve_onboarding_happ_back_primary(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    return {'callback_data': f'onboarding_platform:ios:{key_id}'} if key_id else None
+
+
+def _resolve_onboarding_happ_back_region(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    return {'callback_data': f'onboarding_alt:ios:{key_id}'} if key_id else None
+
+
+def _resolve_onboarding_happ_continue(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    region = str(ctx.get('region') or '')
+    if not key_id or region not in {'ru', 'global'}:
+        return None
+    return {'callback_data': f'onboarding_happ_connection:{region}:{key_id}'}
+
+
+def _resolve_onboarding_happ_done(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    region = str(ctx.get('region') or '')
+    if not key_id or region not in {'ru', 'global'}:
+        return None
+    return {'callback_data': f'onboarding_happ_done:{region}:{key_id}'}
+
+
+def _resolve_onboarding_happ_help(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    region = str(ctx.get('region') or '')
+    if not key_id or region not in {'ru', 'global'}:
+        return None
+    return {'callback_data': f'onboarding_happ_help:{region}:{key_id}'}
+
+
+def _resolve_onboarding_happ_back_install(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    region = str(ctx.get('region') or '')
+    if not key_id or region not in {'ru', 'global'}:
+        return None
+    return {'callback_data': f'onboarding_happ_install:{region}:{key_id}'}
+
+
+def _resolve_onboarding_alt_continue_ios(ctx: dict) -> Optional[dict]:
+    key_id = _onboarding_key_id(ctx)
+    return {'callback_data': f'onboarding_connection_alt:ios:{key_id}'} if key_id else None
 
 
 SYSTEM_BUTTONS: Dict[str, Callable[[Dict[str, Any]], Optional[dict]]] = {
@@ -417,4 +494,15 @@ SYSTEM_BUTTONS: Dict[str, Callable[[Dict[str, Any]], Optional[dict]]] = {
     "btn_onboarding_issue_mobile": _onboarding_issue_button('mobile'),
     "btn_onboarding_issue_stale": _onboarding_issue_button('stale'),
     "btn_onboarding_troubleshoot_back": _resolve_onboarding_troubleshoot_back,
+    "btn_onboarding_happ_ru": lambda ctx: _resolve_onboarding_happ_region(ctx, 'ru'),
+    "btn_onboarding_happ_global": lambda ctx: _resolve_onboarding_happ_region(ctx, 'global'),
+    "btn_onboarding_happ_other": _resolve_onboarding_happ_other,
+    "btn_onboarding_happ_back_primary": _resolve_onboarding_happ_back_primary,
+    "btn_onboarding_happ_back_region": _resolve_onboarding_happ_back_region,
+    "btn_onboarding_happ_continue": _resolve_onboarding_happ_continue,
+    "btn_onboarding_happ_done": _resolve_onboarding_happ_done,
+    "btn_onboarding_happ_help": _resolve_onboarding_happ_help,
+    "btn_onboarding_happ_back_install": _resolve_onboarding_happ_back_install,
+    "btn_onboarding_alt_continue_ios": _resolve_onboarding_alt_continue_ios,
+    "btn_onboarding_alt_other_back": _resolve_onboarding_happ_back_region,
 }

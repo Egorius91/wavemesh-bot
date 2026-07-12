@@ -227,6 +227,17 @@ async def onboarding_alternative_handler(callback: CallbackQuery):
 
     _, platform, raw_key_id = callback.data.split(':', 2)
     key_id = int(raw_key_id)
+    if platform == 'ios':
+        if not await _require_owned_key(callback, key_id):
+            return
+        await callback.answer()
+        await render_page(
+            callback,
+            page_key='onboarding_happ_region',
+            context={'key_id': key_id, 'platform': 'ios', 'app': 'happ'},
+        )
+        return
+
     page_key = ALTERNATIVE_DOWNLOAD_PAGES.get(platform)
     if not page_key or not await _require_owned_key(callback, key_id):
         return
@@ -258,6 +269,133 @@ async def onboarding_alternative_handler(callback: CallbackQuery):
                 ),
             ],
         ],
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_alt_other:'))
+async def onboarding_other_ios_apps_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, platform, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    if platform != 'ios' or not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key='download_ios',
+        visibility={'btn_back_downloads': False},
+        context={
+            'key_id': key_id,
+            'platform': 'ios',
+            'connection_variant': 'alternative',
+        },
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_happ_install:'))
+async def onboarding_happ_install_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, region, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    if region not in {'ru', 'global'} or not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key=f'onboarding_happ_install_{region}',
+        context={
+            'key_id': key_id,
+            'platform': 'ios',
+            'app': 'happ',
+            'region': region,
+        },
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_happ_connection:'))
+async def onboarding_happ_connection_handler(callback: CallbackQuery):
+    from bot.services.branding import ONBOARDING_HAPP_CONNECTION_TEXT
+    from bot.utils.key_sender import send_key_with_qr
+    from bot.utils.page_renderer import build_page_keyboard
+
+    _, region, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    key = await _require_owned_key(callback, key_id)
+    if not key or region not in {'ru', 'global'}:
+        return
+
+    context = {
+        'key_id': key_id,
+        'platform': 'ios',
+        'app': 'happ',
+        'region': region,
+        'connection_variant': 'alternative',
+    }
+    await callback.answer()
+    await send_key_with_qr(
+        callback,
+        key,
+        key_manage_markup=build_page_keyboard(
+            'onboarding_happ_connection',
+            context=context,
+        ),
+        is_new=False,
+        page_key='onboarding_happ_connection',
+        fallback_text=ONBOARDING_HAPP_CONNECTION_TEXT,
+        use_page_markup=True,
+        onboarding_platform='ios',
+        onboarding_app='happ',
+        onboarding_region=region,
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_happ_help:'))
+async def onboarding_happ_help_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, region, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    if region not in {'ru', 'global'} or not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key='onboarding_troubleshoot',
+        context={
+            'key_id': key_id,
+            'platform': 'ios',
+            'connection_variant': 'alternative',
+            'app': 'happ',
+            'region': region,
+        },
+    )
+
+
+@router.callback_query(F.data.startswith('onboarding_happ_done:'))
+async def onboarding_happ_done_handler(callback: CallbackQuery):
+    from bot.utils.page_renderer import render_page
+
+    _, region, raw_key_id = callback.data.split(':', 2)
+    key_id = int(raw_key_id)
+    if region not in {'ru', 'global'} or not await _require_owned_key(callback, key_id):
+        return
+
+    await callback.answer()
+    await render_page(
+        callback,
+        page_key='onboarding_success',
+        context={
+            'key_id': key_id,
+            'platform': 'ios',
+            'connection_variant': 'alternative',
+            'app': 'happ',
+            'region': region,
+        },
     )
 
 
@@ -317,20 +455,31 @@ async def onboarding_help_alternative_handler(callback: CallbackQuery):
 async def onboarding_issue_handler(callback: CallbackQuery):
     from bot.utils.page_renderer import render_page
 
-    _, issue, variant, platform, raw_key_id = callback.data.split(':', 4)
+    parts = callback.data.split(':')
+    if len(parts) == 6 and parts[2] == 'happ':
+        _, issue, variant, platform, region, raw_key_id = parts
+    elif len(parts) == 5:
+        _, issue, variant, platform, raw_key_id = parts
+        region = None
+    else:
+        await callback.answer('Некорректный шаг настройки', show_alert=True)
+        return
     key_id = int(raw_key_id)
     page_key = ISSUE_PAGES.get(issue)
     if (
         not page_key
-        or variant not in {'primary', 'alt'}
+        or variant not in {'primary', 'alt', 'happ'}
         or platform not in PLATFORM_PAGES
+        or (variant == 'happ' and region not in {'ru', 'global'})
         or not await _require_owned_key(callback, key_id)
     ):
         return
 
     context = {'key_id': key_id, 'platform': platform}
-    if variant == 'alt':
+    if variant in {'alt', 'happ'}:
         context['connection_variant'] = 'alternative'
+    if variant == 'happ':
+        context.update({'app': 'happ', 'region': region})
 
     await callback.answer()
     await render_page(callback, page_key=page_key, context=context)

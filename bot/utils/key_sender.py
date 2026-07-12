@@ -23,6 +23,8 @@ KEY_DELIVERY_CONTEXT_ATTACH_MARKUP = 'key_delivery_attach_markup'
 KEY_DELIVERY_CONTEXT_USE_PAGE_MARKUP = 'key_delivery_use_page_markup'
 KEY_DELIVERY_CONTEXT_KEY_ID = 'key_delivery_key_id'
 KEY_DELIVERY_CONTEXT_PLATFORM = 'key_delivery_platform'
+KEY_DELIVERY_CONTEXT_APP = 'key_delivery_app'
+KEY_DELIVERY_CONTEXT_REGION = 'key_delivery_region'
 
 
 # Дефолтный текст выдачи ключа в формате HTML
@@ -110,6 +112,7 @@ def _get_key_delivery_markup(
     fallback_markup: Optional[InlineKeyboardMarkup],
     page_key: str = KEY_DELIVERY_PAGE,
     use_page_markup: bool = True,
+    context: Optional[dict] = None,
 ) -> Optional[InlineKeyboardMarkup]:
     """Берёт клавиатуру страницы из БД, если она доступна, иначе использует fallback."""
     if not use_page_markup:
@@ -118,7 +121,7 @@ def _get_key_delivery_markup(
     try:
         from bot.utils.page_renderer import build_page_keyboard
 
-        markup = build_page_keyboard(page_key)
+        markup = build_page_keyboard(page_key, context=context)
         return markup or fallback_markup
     except Exception as e:
         logger.warning("Не удалось собрать клавиатуру страницы выдачи ключа: %s", e)
@@ -142,8 +145,18 @@ def _build_key_delivery_caption(
     if len(caption) <= 1024:
         return caption
 
-    if page_key in {'onboarding_connection', 'onboarding_connection_alternative'}:
-        if page_key == 'onboarding_connection_alternative':
+    if page_key in {
+        'onboarding_connection',
+        'onboarding_connection_alternative',
+        'onboarding_happ_connection',
+    }:
+        if page_key == 'onboarding_happ_connection':
+            compact = (
+                "🔗 <b>Добавьте подключение в HAPP</b>\n\n"
+                f"{format_key_copy_value(raw_value)}\n\n"
+                "Импортируйте ссылку из буфера обмена или отсканируйте QR-код в HAPP."
+            )
+        elif page_key == 'onboarding_connection_alternative':
             compact = (
                 "🔗 <b>Добавьте подключение</b>\n\n"
                 f"{format_key_copy_value(raw_value)}\n\n"
@@ -224,6 +237,8 @@ def _remember_key_delivery_context(
     use_page_markup: bool,
     key_id: Optional[int],
     platform: Optional[str],
+    app: Optional[str],
+    region: Optional[str],
 ) -> None:
     """Запоминает страницу выдачи ключа для контекстной команды /yaa."""
     if not viewer_id:
@@ -248,6 +263,8 @@ def _remember_key_delivery_context(
                 KEY_DELIVERY_CONTEXT_USE_PAGE_MARKUP: use_page_markup,
                 KEY_DELIVERY_CONTEXT_KEY_ID: key_id,
                 KEY_DELIVERY_CONTEXT_PLATFORM: platform,
+                KEY_DELIVERY_CONTEXT_APP: app,
+                KEY_DELIVERY_CONTEXT_REGION: region,
             },
             text_replacements=build_key_delivery_replacements(raw_value),
         )
@@ -268,6 +285,8 @@ async def render_key_delivery_page(
     use_page_markup: bool = True,
     key_id: Optional[int] = None,
     platform: Optional[str] = None,
+    app: Optional[str] = None,
+    region: Optional[str] = None,
 ) -> Message:
     """Рендерит специальную страницу выдачи ключа с QR и запоминает её для /yaa."""
     target_message = _get_target_message(messageable)
@@ -279,6 +298,13 @@ async def render_key_delivery_page(
             key_manage_markup,
             page_key=page_key,
             use_page_markup=use_page_markup,
+            context={
+                'key_id': key_id,
+                'platform': platform,
+                'app': app,
+                'region': region,
+                'connection_variant': 'alternative' if app else None,
+            },
         )
         if attach_markup else None
     )
@@ -302,6 +328,8 @@ async def render_key_delivery_page(
         use_page_markup=use_page_markup,
         key_id=key_id,
         platform=platform,
+        app=app,
+        region=region,
     )
     return rendered_message
 
@@ -316,7 +344,10 @@ async def rerender_key_delivery_page_context(page_context, viewer_id: int) -> bo
     use_page_markup = bool(context.get(KEY_DELIVERY_CONTEXT_USE_PAGE_MARKUP, True))
     key_id = context.get(KEY_DELIVERY_CONTEXT_KEY_ID)
     platform = context.get(KEY_DELIVERY_CONTEXT_PLATFORM)
+    app = context.get(KEY_DELIVERY_CONTEXT_APP)
+    region = context.get(KEY_DELIVERY_CONTEXT_REGION)
     key_manage_markup = None
+    is_happ = page_context.page_key == 'onboarding_happ_connection'
     is_alternative = page_context.page_key == 'onboarding_connection_alternative'
     if not use_page_markup and key_id and platform:
         from bot.handlers.user.onboarding import onboarding_connection_kb
@@ -336,6 +367,10 @@ async def rerender_key_delivery_page_context(page_context, viewer_id: int) -> bo
         from bot.services.branding import ONBOARDING_CONNECTION_ALTERNATIVE_TEXT
 
         fallback_text = ONBOARDING_CONNECTION_ALTERNATIVE_TEXT
+    elif is_happ:
+        from bot.services.branding import ONBOARDING_HAPP_CONNECTION_TEXT
+
+        fallback_text = ONBOARDING_HAPP_CONNECTION_TEXT
 
     await render_key_delivery_page(
         page_context.message,
@@ -350,6 +385,8 @@ async def rerender_key_delivery_page_context(page_context, viewer_id: int) -> bo
         use_page_markup=use_page_markup,
         key_id=int(key_id) if key_id else None,
         platform=str(platform) if platform else None,
+        app=str(app) if app else None,
+        region=str(region) if region else None,
     )
     return True
 
@@ -363,6 +400,8 @@ async def send_key_with_qr(
     fallback_text: str = DEFAULT_KEY_DELIVERY_TEXT,
     use_page_markup: bool = True,
     onboarding_platform: Optional[str] = None,
+    onboarding_app: Optional[str] = None,
+    onboarding_region: Optional[str] = None,
 ):
     """
     Отправляет пользователю ключ с QR-кодом и файлом конфигурации.
@@ -409,6 +448,8 @@ async def send_key_with_qr(
                 use_page_markup=use_page_markup,
                 key_id=key_data.get('id'),
                 platform=onboarding_platform,
+                app=onboarding_app,
+                region=onboarding_region,
             )
             return
 
@@ -455,6 +496,8 @@ async def send_key_with_qr(
             use_page_markup=use_page_markup,
             key_id=key_data.get('id'),
             platform=onboarding_platform,
+            app=onboarding_app,
+            region=onboarding_region,
         )
 
         # 4. Отправляем JSON конфиг файлом

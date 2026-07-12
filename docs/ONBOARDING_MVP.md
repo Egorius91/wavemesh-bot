@@ -30,6 +30,10 @@ Open a page as an administrator and send `/yaa`:
 - `onboarding_macos`
 - `onboarding_connection`
 - `onboarding_connection_alternative`
+- `onboarding_happ_region`
+- `onboarding_happ_install_ru`
+- `onboarding_happ_install_global`
+- `onboarding_happ_connection`
 - `onboarding_troubleshoot`
 - `onboarding_issue_enable`
 - `onboarding_issue_no_traffic`
@@ -60,6 +64,12 @@ Existing `/yaa` custom text and media are not overwritten at startup.
 13. Test every symptom on the troubleshooting page in both the OneXray and
     alternative-client flows. Back and retry actions must preserve the selected
     client path.
+14. On iOS choose `Another application`, verify the HAPP region selector and
+    the direct RU (`6783623643`) and Global (`6504287215`) App Store links.
+15. Verify RU fallback actions: Global HAPP, Streisand/V2Box, and the App Store
+    region guide. Every Back action must remain inside the guided setup.
+16. Import a subscription into both HAPP builds, then test VLESS/XHTTP on Wi-Fi
+    and mobile data, subscription refresh, and an application restart.
 
 ## Rollback
 
