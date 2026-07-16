@@ -263,7 +263,7 @@ async def select_add_key_server(callback: CallbackQuery, state: FSMContext):
         await callback.answer('⛔ Доступ запрещён', show_alert=True)
         return
     from database.requests import get_server_by_id
-    from bot.services.vpn_api import is_subscription_mode
+    from bot.services.vpn_api import is_subscription_mode, get_public_subscription_inbounds
     server_id = int(callback.data.split(':')[1])
     server = get_server_by_id(server_id)
     if not server:
@@ -271,11 +271,11 @@ async def select_add_key_server(callback: CallbackQuery, state: FSMContext):
         return
     await state.update_data(add_key_server_id=server_id)
 
-    # Subscription mode: пропускаем выбор inbound — ключ создаётся во всех
+    # Subscription mode: пропускаем выбор inbound — ключ создаётся во всех публичных
     if is_subscription_mode():
         try:
             client = get_client_from_server_data(server)
-            inbounds = await client.get_inbounds()
+            inbounds = await get_public_subscription_inbounds(client)
             if not inbounds:
                 await callback.answer('❌ На сервере нет inbound', show_alert=True)
                 return
@@ -363,7 +363,7 @@ async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
     days = data.get('add_key_days', 30)
     from database.requests import get_server_by_id, get_admin_tariff
     from database.db_keys import create_vpn_key_subscription_admin
-    from bot.services.vpn_api import is_subscription_mode
+    from bot.services.vpn_api import is_subscription_mode, get_public_subscription_inbounds
     import uuid as _uuid
     server = get_server_by_id(server_id)
     if not server:
@@ -379,7 +379,7 @@ async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
         tariff_id = admin_tariff['id']
 
         if subscription_mode:
-            inbounds = await client.get_inbounds()
+            inbounds = await get_public_subscription_inbounds(client)
             if not inbounds:
                 await callback.answer('❌ На сервере нет inbound', show_alert=True)
                 return

@@ -18,6 +18,7 @@ import time
 import urllib.parse
 from typing import Optional, Dict, Any, List
 from config import RETRY_CONFIG
+from bot.utils.subscriptions import build_public_subscription_url
 
 logger = logging.getLogger(__name__)
 
@@ -1939,9 +1940,12 @@ class XUIClient(BaseVPNClient):
             sub_id: Subscription ID клиента
 
         Returns:
-            Полный URL вида 'https://host:2096/sub/{sub_id}' или None.
+            Полный URL с настроенным 3X-UI public prefix или None.
         """
-        settings = await self.get_panel_settings()
+        cached_settings = self._panel_settings
+        settings = await self.get_panel_settings(force_refresh=True)
+        if not settings:
+            settings = cached_settings
         if not settings:
             logger.warning(
                 f"build_subscription_url: не удалось получить настройки панели "
@@ -1949,50 +1953,13 @@ class XUIClient(BaseVPNClient):
             )
             return None
 
-        # Подписка вообще включена?
-        if not settings.get("subEnable"):
+        url = build_public_subscription_url(settings, sub_id, fallback_host=self.host)
+        if not url:
             logger.warning(
-                f"build_subscription_url: на панели {self.server.get('name', self.server_id)} "
-                f"subscription отключена (subEnable=false). Включите её в настройках 3X-UI."
+                f"build_subscription_url: настройки subscription URL панели "
+                f"{self.server.get('name', self.server_id)} неполные или subscription отключена."
             )
-            return None
-
-        # Если админ задал кастомный subURI — это готовый префикс, добавляем только sub_id.
-        sub_uri = (settings.get("subURI") or "").strip()
-        if sub_uri:
-            if not sub_uri.endswith("/"):
-                sub_uri = sub_uri + "/"
-            return f"{sub_uri}{sub_id}"
-
-        # Собираем URL из компонент.
-        from urllib.parse import urlparse
-        sub_domain = (settings.get("subDomain") or "").strip()
-        if not sub_domain:
-            # Берём хост панели (без http://)
-            parsed = urlparse(self.base_url)
-            sub_domain = parsed.hostname or self.host
-
-        sub_port = settings.get("subPort") or 0
-        try:
-            sub_port = int(sub_port)
-        except (TypeError, ValueError):
-            sub_port = 0
-
-        # Путь: 3X-UI кладёт его как '/sub/' или 'sub/' — нормализуем.
-        sub_path = settings.get("subPath") or "/"
-        if not sub_path.startswith("/"):
-            sub_path = "/" + sub_path
-        if not sub_path.endswith("/"):
-            sub_path = sub_path + "/"
-
-        # Схема: HTTPS если у sub-server задан сертификат, иначе HTTP.
-        # subKeyFile + subCertFile вместе означают TLS на sub-port.
-        cert_file = (settings.get("subCertFile") or "").strip()
-        key_file = (settings.get("subKeyFile") or "").strip()
-        scheme = "https" if (cert_file and key_file) else "http"
-
-        port_part = f":{sub_port}" if sub_port and sub_port not in (80 if scheme == "http" else 443,) else ""
-        return f"{scheme}://{sub_domain}{port_part}{sub_path}{sub_id}"
+        return url
 
 
     async def update_client_traffic_limit(
@@ -2577,31 +2544,30 @@ class XUIClient(BaseVPNClient):
                 if isinstance(links, str) and links.strip():
                     return links.strip()
         except Exception as e:
-            logger.debug(f"clients API subLinks не сработал для {sub_id}: {e}")
+            logger.debug(
+                "clients API subLinks не сработал для сервера %s: %s",
+                self.server.get('name', self.server_id),
+                e,
+            )
 
         session = await self._ensure_session()
         
-        # Строим список URL кандидатов
-        # 1. С base_path
-        # 2. Без base_path
-        # 3. /subscribe/ вместо /sub/ (иногда бывает)
-        
-        from urllib.parse import urlparse
-        parsed = urlparse(self.base_url)
-        host_url = f"{parsed.scheme}://{parsed.netloc}"
-        
-        candidates = [
-            f"{self.base_url}/sub/{sub_id}",
-            f"{host_url}/sub/{sub_id}",
-            f"{self.base_url}/subscribe/{sub_id}",
-            f"{host_url}/subscribe/{sub_id}"
-        ]
+        # Публичный путь берётся только из настроек 3X-UI. Это сохраняет
+        # opaque URL Node Builder и не угадывает namespace.
+        public_url = await self.build_subscription_url(sub_id)
+        if not public_url:
+            return None
+        candidates = [public_url]
         
         for url in candidates:
             try:
                 # Важно: Не используем _request, так как это публичный endpoint
                 async with session.get(url, ssl=False) as response:
-                    logger.info(f"Sub URL probe: {url} -> {response.status}")
+                    logger.info(
+                        "Subscription URL probe for server %s -> %s",
+                        self.server.get('name', self.server_id),
+                        response.status,
+                    )
 
                     if response.status == 200:
                         text = await response.text()
@@ -2623,11 +2589,18 @@ class XUIClient(BaseVPNClient):
                                 return decoded
                         except:
                             # Логируем, если это что-то странное
-                            if len(text) < 200:
-                                logger.debug(f"Unknown response text: {text}")
+                            logger.debug(
+                                "Unknown subscription response for server %s (length=%s)",
+                                self.server.get('name', self.server_id),
+                                len(text),
+                            )
                             pass
             except Exception as e:
-                logger.warning(f"Ошибка получения подписки ({url}): {e}")
+                logger.warning(
+                    "Ошибка получения подписки для сервера %s: %s",
+                    self.server.get('name', self.server_id),
+                    e,
+                )
 
         return None
 

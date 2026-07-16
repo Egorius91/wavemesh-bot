@@ -467,7 +467,12 @@ async def _replace_key_panel_config(callback: CallbackQuery, key: dict, server_i
     import uuid as _uuid
     from database.requests import get_tariff_by_id, update_vpn_key_config, get_key_details_for_user
     from bot.handlers.admin.users_keys import generate_unique_email
-    from bot.services.vpn_api import get_client, is_subscription_mode, sync_key_to_panel_state
+    from bot.services.vpn_api import (
+        get_client,
+        get_public_subscription_inbounds,
+        is_subscription_mode,
+        sync_key_to_panel_state,
+    )
 
     client = await get_client(server_id)
     tariff = get_tariff_by_id(key.get('tariff_id')) if key.get('tariff_id') else None
@@ -480,7 +485,7 @@ async def _replace_key_panel_config(callback: CallbackQuery, key: dict, server_i
     })
 
     if is_subscription_mode():
-        inbounds = await client.get_inbounds()
+        inbounds = await get_public_subscription_inbounds(client)
         if not inbounds:
             raise RuntimeError('На сервере нет доступных протоколов')
 
