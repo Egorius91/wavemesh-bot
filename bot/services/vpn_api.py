@@ -11,6 +11,7 @@ import inspect
 from .panels.base import VPNAPIError, BaseVPNClient
 from .panels.xui import XUIClient
 from bot.utils.inbounds import split_ignored_inbounds
+from bot.utils.subscriptions import filter_public_subscription_inbounds
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,12 @@ def get_bot_mode() -> str:
 def is_subscription_mode() -> bool:
     """True, если бот работает в режиме Subscription."""
     return get_bot_mode() == 'subscription'
+
+
+async def get_public_subscription_inbounds(client: BaseVPNClient) -> List[Dict[str, Any]]:
+    """Return enabled inbounds that 3X-UI may expose in a client subscription."""
+    return filter_public_subscription_inbounds(await client.get_inbounds())
+
 
 def get_client_from_server_data(server: Dict[str, Any]) -> BaseVPNClient:
     """
@@ -794,12 +801,23 @@ async def ensure_subscription_keys_on_server(key_id: int, reset_traffic: bool = 
         if not all_inbounds:
             return stats
 
-        inbounds, ignored_inbounds = split_ignored_inbounds(all_inbounds)
+        mode = get_bot_mode()
+        visible_inbounds, ignored_inbounds = split_ignored_inbounds(all_inbounds)
+        if mode == 'subscription':
+            inbounds = filter_public_subscription_inbounds(visible_inbounds)
+            public_ids = {inbound.get('id') for inbound in inbounds}
+            excluded_inbounds = [
+                inbound for inbound in all_inbounds
+                if inbound.get('id') not in public_ids
+            ]
+        else:
+            inbounds = visible_inbounds
+            excluded_inbounds = ignored_inbounds
         all_presence = _parse_clients_by_email(all_inbounds, email)
         presence = _parse_clients_by_email(inbounds, email)
 
-        ignored_presence = _parse_clients_by_email(ignored_inbounds, email)
-        for inb_id, cl in sorted(ignored_presence.items()):
+        excluded_presence = _parse_clients_by_email(excluded_inbounds, email)
+        for inb_id, cl in sorted(excluded_presence.items()):
             cid = _client_identifier(cl)
             if not cid:
                 stats['errors'] += 1
@@ -810,11 +828,10 @@ async def ensure_subscription_keys_on_server(key_id: int, reset_traffic: bool = 
             except Exception as e:
                 stats['errors'] += 1
                 logger.warning(
-                    f"ensure_subscription_keys: не удалось удалить скрытого клиента {email} "
-                    f"из inbound {inb_id} сервера {server_id}: {e}"
+                    f"ensure_subscription_keys: не удалось удалить клиента {email} "
+                    f"из непубличного inbound {inb_id} сервера {server_id}: {e}"
                 )
 
-        mode = get_bot_mode()
         expiry_time_ms = _key_expiry_time_ms(key)
         traffic_limit = key.get('traffic_limit', 0) or 0
         user_banned = bool(key.get('is_banned', 0))
@@ -1208,7 +1225,7 @@ __all__ = [
     "format_traffic", "close_all_clients", "get_client", "test_server_connection",
     "reset_key_traffic_if_active", "extend_key_on_server", "restore_key_traffic_limit",
     "push_key_to_panel", "restore_traffic_limit_in_db",
-    "get_bot_mode", "is_subscription_mode",
+    "get_bot_mode", "is_subscription_mode", "get_public_subscription_inbounds",
     "ensure_subscription_keys_on_server", "sync_key_to_panel_state",
     "get_subscription_url_for_key", "get_key_traffic_snapshot",
 ]
