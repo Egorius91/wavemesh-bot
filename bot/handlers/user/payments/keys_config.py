@@ -58,7 +58,7 @@ async def process_new_key_server_selection(callback: CallbackQuery, state: FSMCo
         return
     await state.update_data(new_key_server_id=server_id)
 
-    # Subscription mode: выбор inbound не нужен — создаём ключ во всех inbound сразу
+    # Subscription mode: выбор inbound не нужен — создаём ключ во всех публичных inbound сразу
     if is_subscription_mode():
         await process_new_key_subscription_final(callback, state, server_id)
         return
@@ -88,7 +88,7 @@ async def process_new_key_subscription_final(callback: CallbackQuery, state: FSM
     """
     Финальный этап создания ключа в режиме Subscription.
 
-    Создаёт клиента во ВСЕХ inbound сервера с одним subId и одним email.
+    Создаёт клиента во всех включённых публичных inbound с одним subId и email.
     В БД сохраняется только одна запись vpn_keys с panel_inbound_id=min_id
     и sub_id, который объединяет всех клиентов на панели в одну подписку.
     """
@@ -98,7 +98,7 @@ async def process_new_key_subscription_final(callback: CallbackQuery, state: FSM
         get_key_details_for_user, create_initial_vpn_key,
         get_tariff_by_id, update_vpn_key_config,
     )
-    from bot.services.vpn_api import get_client
+    from bot.services.vpn_api import get_client, get_public_subscription_inbounds
     from bot.handlers.admin.users_keys import generate_unique_email
     from bot.utils.key_sender import send_key_with_qr
     from bot.keyboards.user import key_issued_kb
@@ -135,7 +135,7 @@ async def process_new_key_subscription_final(callback: CallbackQuery, state: FSM
         sub_id = _uuid.uuid4().hex
 
         client = await get_client(server_id)
-        inbounds = await client.get_inbounds()
+        inbounds = await get_public_subscription_inbounds(client)
         if not inbounds:
             raise RuntimeError('На сервере нет доступных inbound')
 
