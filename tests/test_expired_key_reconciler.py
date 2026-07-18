@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from bot.services import expired_key_reconciler as reconciler
 
@@ -66,7 +66,7 @@ class ExpiredSubscriptionReconcilerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_extended_key_can_be_reconciled_after_next_expiration(self):
         ensure = AsyncMock(return_value={"disabled": 1, "errors": 0, "ok": 1})
-        active_query = unittest.mock.Mock(
+        active_query = Mock(
             side_effect=[
                 [],
                 [{"id": 2, "sub_id": "subscription"}],
