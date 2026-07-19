@@ -30,6 +30,7 @@ async def cmd_context_page_editor(message: Message, state: FSMContext):
 
     from bot.handlers.admin.message_editor import show_message_editor
     from bot.services.page_context import get_page_context
+    from bot.utils.yaa_context import build_yaa_help_text
 
     page_context = get_page_context(message.from_user.id)
     if not page_context:
@@ -41,13 +42,9 @@ async def cmd_context_page_editor(message: Message, state: FSMContext):
         )
         return
 
-    help_text = (
-        "📌 <b>Редактирование экрана</b>\n\n"
-        "Отправьте новое сообщение боту:\n"
-        "• текст — чтобы заменить текст экрана;\n"
-        "• фото/видео/GIF с подписью — чтобы заменить текст и изображение.\n\n"
-        "Динамические плейсхолдеры экрана нужно сохранить, если они есть: "
-        "<code>%тарифы%</code>, <code>%данныеэкрана%</code>, <code>%списокключей%</code>."
+    help_text = build_yaa_help_text(
+        page_context.page_key,
+        page_context.text_replacements,
     )
 
     await show_message_editor(
@@ -63,7 +60,6 @@ async def cmd_context_page_editor(message: Message, state: FSMContext):
 # ============================================================================
 # ПРОВЕРКА АДМИНИСТРАТОРА
 # ============================================================================
-
 
 
 
@@ -204,4 +200,3 @@ async def show_author_support(callback: CallbackQuery):
 
 # Раздел «Пользователи» реализован в users.py
 # Раздел «Настройки бота» реализован в system.py
-
