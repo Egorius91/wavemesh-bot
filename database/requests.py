@@ -8,6 +8,7 @@
 from database.connection import get_db
 from database.db_users import *
 from database.db_keys import *
+from database.db_key_expiry import *
 from database.db_payments import *
 from database.db_servers import *
 from database.db_tariffs import *
