@@ -21,11 +21,11 @@ jobs:
       - name: Package source
         run: |
           tar --exclude=.git --exclude=.github/workflows/export-source-once.yml \
-            -czf wavemesh-bot-source.tar.gz .
+            -czf /tmp/wavemesh-bot-source.tar.gz .
 
       - name: Upload source snapshot
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wavemesh-bot-source
-          path: wavemesh-bot-source.tar.gz
+          path: /tmp/wavemesh-bot-source.tar.gz
           retention-days: 1
