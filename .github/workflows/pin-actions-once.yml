@@ -1,4 +1,4 @@
-name: Pin latest GitHub Actions once
+name: Prepare pinned GitHub Actions files
 
 on:
   pull_request:
@@ -6,11 +6,10 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  pin-actions:
-    if: github.actor != 'github-actions[bot]'
+  prepare-pinned-files:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -19,7 +18,6 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.head_ref }}
-          fetch-depth: 0
 
       - name: Pin action versions by full commit SHA
         run: |
@@ -75,16 +73,14 @@ jobs:
                       )
                   text = text.replace(old, new)
               path.write_text(text, encoding='utf-8')
-
-          Path('.github/workflows/pin-actions-once.yml').unlink()
-          Path('.github/pin-actions-trigger.txt').unlink(missing_ok=True)
           PY
 
-      - name: Commit pinned workflow references
-        run: |
-          git diff --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github
-          git commit -m 'Pin latest GitHub Actions by commit SHA'
-          git push origin "HEAD:${GITHUB_HEAD_REF}"
+      - name: Upload prepared workflow files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pinned-workflows
+          path: |
+            .github/workflows/gitleaks.yml
+            .github/workflows/quality.yml
+            .github/workflows/python-check.yml
+          retention-days: 1
