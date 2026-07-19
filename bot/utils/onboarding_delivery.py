@@ -50,9 +50,10 @@ async def send_onboarding_connection(
         raw_value = None
 
     if not raw_value:
-        await callback.answer(
-            "Не удалось получить ссылку подключения. Повторите позже или обратитесь в поддержку.",
-            show_alert=True,
+        await safe_edit_or_send(
+            callback.message,
+            "❌ <b>Не удалось получить ссылку подключения</b>\n\n"
+            "Повторите попытку позже или обратитесь в поддержку @wavemesh.",
         )
         return False
 
