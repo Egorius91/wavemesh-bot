@@ -149,7 +149,7 @@ async def _finalize_success(
             order_id,
         )
 
-    return {'status': 'succeeded', 'subscription_id': sub_id, **result}
+    return {**result, 'status': 'succeeded', 'subscription_id': sub_id}
 
 
 async def _record_definitive_failure(
@@ -189,7 +189,7 @@ async def _record_definitive_failure(
             attempts,
             failure.get('next_charge_at'),
         )
-    return {'status': 'failed', 'subscription_id': sub_id, **failure}
+    return {**failure, 'status': 'failed', 'subscription_id': sub_id}
 
 
 async def _handle_payment(
