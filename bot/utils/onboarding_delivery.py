@@ -57,11 +57,9 @@ async def send_onboarding_connection(
         )
         return False
 
+    replacements = {"%ключ%": format_key_copy_value(raw_value)}
     base_text = get_message_data(page_key, fallback_text).get("text") or fallback_text
-    caption = apply_placeholder_replacements(
-        base_text,
-        {"%ключ%": format_key_copy_value(raw_value)},
-    )
+    caption = apply_placeholder_replacements(base_text, replacements)
     if len(caption) > 1024:
         caption = (
             "🔗 <b>Добавьте подключение</b>\n\n"
@@ -71,10 +69,26 @@ async def send_onboarding_connection(
 
     photo = BufferedInputFile(generate_qr_code(raw_value), filename="subscription_qr.png")
     markup = build_page_keyboard(page_key, context=context)
-    await safe_edit_or_send(
+    rendered_message = await safe_edit_or_send(
         callback.message,
         caption,
         reply_markup=markup,
         photo=photo,
     )
+
+    try:
+        from config import ADMIN_IDS
+        from bot.services.page_context import remember_page_context
+
+        if callback.from_user.id in ADMIN_IDS:
+            remember_page_context(
+                callback.from_user.id,
+                page_key=page_key,
+                message=rendered_message,
+                context=context,
+                text_replacements=replacements,
+            )
+    except Exception as exc:
+        logger.warning("Could not remember onboarding connection for /yaa: %s", exc)
+
     return True
