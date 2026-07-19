@@ -1,4 +1,4 @@
-"""ЮKassa API helpers для подписок и рекуррентных списаний."""
+"""ЮKassa API helpers for initial and recurring subscription payments."""
 import base64
 import io
 import logging
@@ -14,6 +14,21 @@ from bot.services.billing import build_payment_return_url
 logger = logging.getLogger(__name__)
 
 YOOKASSA_API_URL = 'https://api.yookassa.ru/v3/payments'
+HTTP_TIMEOUT_SECONDS = 20
+
+
+class YooKassaAPIError(RuntimeError):
+    """Structured YooKassa API error with a retryability hint."""
+
+    def __init__(self, status: int, description: str, *, code: str = '') -> None:
+        self.status = int(status)
+        self.code = str(code or '')
+        self.description = str(description or 'Неизвестная ошибка')
+        super().__init__(f'ЮKassa API ошибка ({self.status}): {self.description}')
+
+    @property
+    def retryable(self) -> bool:
+        return self.status in (408, 425, 429) or self.status >= 500
 
 
 def _auth_headers(idempotence_key: Optional[str] = None) -> Dict[str, str]:
@@ -33,17 +48,12 @@ def _auth_headers(idempotence_key: Optional[str] = None) -> Dict[str, str]:
 
 def _build_receipt(*, amount_rub: float, description: str, order_id: str) -> Dict[str, Any]:
     return {
-        'customer': {
-            'email': f'user_{order_id}@t.me',
-        },
+        'customer': {'email': f'user_{order_id}@t.me'},
         'items': [
             {
                 'description': description[:128],
                 'quantity': '1.00',
-                'amount': {
-                    'value': f'{amount_rub:.2f}',
-                    'currency': 'RUB',
-                },
+                'amount': {'value': f'{amount_rub:.2f}', 'currency': 'RUB'},
                 'vat_code': 1,
                 'payment_mode': 'full_prepayment',
                 'payment_subject': 'service',
@@ -67,15 +77,32 @@ def _qr_bytes(url: str) -> bytes:
     return bio.getvalue()
 
 
+async def _response_json(response: aiohttp.ClientResponse) -> Dict[str, Any]:
+    try:
+        data = await response.json()
+    except (aiohttp.ContentTypeError, ValueError):
+        text = await response.text()
+        data = {'description': text[:500] or f'HTTP {response.status}'}
+    return data if isinstance(data, dict) else {'description': f'HTTP {response.status}'}
+
+
+def _raise_api_error(response_status: int, data: Dict[str, Any]) -> None:
+    raise YooKassaAPIError(
+        response_status,
+        data.get('description') or 'Неизвестная ошибка',
+        code=data.get('code') or '',
+    )
+
+
 async def get_yookassa_payment(payment_id: str) -> Dict[str, Any]:
-    """Возвращает полный объект платежа ЮKassa."""
-    async with aiohttp.ClientSession() as session:
+    """Returns the full YooKassa payment object."""
+    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(f'{YOOKASSA_API_URL}/{payment_id}', headers=_auth_headers()) as response:
-            data = await response.json()
+            data = await _response_json(response)
             if response.status != 200:
-                error_desc = data.get('description', 'Неизвестная ошибка') if isinstance(data, dict) else f'HTTP {response.status}'
-                logger.error('ЮKassa статус ошибка %s: %s', response.status, error_desc)
-                raise RuntimeError(f'ЮKassa API ошибка: {error_desc}')
+                logger.warning('ЮKassa payment status error %s: %s', response.status, data.get('description'))
+                _raise_api_error(response.status, data)
             return data
 
 
@@ -87,20 +114,14 @@ async def create_yookassa_initial_subscription_payment(
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs,
 ) -> Dict[str, Any]:
-    """Создаёт первый платёж подписки с сохранением payment_method."""
+    """Creates the first payment and requests a saved payment method."""
     idempotence_key = f'sub-init-{order_id}-{uuid.uuid4().hex[:8]}'
     return_url = build_payment_return_url(bot_name, 'yookassa', order_id)
     payload = {
-        'amount': {
-            'value': f'{amount_rub:.2f}',
-            'currency': 'RUB',
-        },
+        'amount': {'value': f'{amount_rub:.2f}', 'currency': 'RUB'},
         'capture': True,
         'save_payment_method': True,
-        'confirmation': {
-            'type': 'redirect',
-            'return_url': return_url,
-        },
+        'confirmation': {'type': 'redirect', 'return_url': return_url},
         'description': description,
         'receipt': _build_receipt(amount_rub=amount_rub, description=description, order_id=order_id),
         'metadata': {
@@ -110,18 +131,21 @@ async def create_yookassa_initial_subscription_payment(
         },
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(YOOKASSA_API_URL, json=payload, headers=_auth_headers(idempotence_key)) as response:
-            data = await response.json()
+    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(
+            YOOKASSA_API_URL,
+            json=payload,
+            headers=_auth_headers(idempotence_key),
+        ) as response:
+            data = await _response_json(response)
             if response.status not in (200, 201):
-                error_desc = data.get('description', 'Неизвестная ошибка') if isinstance(data, dict) else f'HTTP {response.status}'
-                logger.error('ЮKassa subscription init error %s: %s | payload=%s', response.status, error_desc, payload)
-                raise RuntimeError(f'ЮKassa API ошибка: {error_desc}')
+                logger.warning('ЮKassa initial subscription error %s: %s', response.status, data.get('description'))
+                _raise_api_error(response.status, data)
 
             confirmation = data.get('confirmation', {})
             qr_url = confirmation.get('confirmation_url', '')
             if not qr_url:
-                logger.error('ЮKassa API не вернул confirmation_url для подписки: %s', data)
                 raise RuntimeError('ЮKassa API не вернул ссылку оплаты')
 
             return {
@@ -140,13 +164,14 @@ async def create_yookassa_recurring_payment(
     payment_method_id: str,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Создаёт автоплатёж по сохранённому payment_method_id."""
-    idempotence_key = f'sub-rec-{order_id}-{uuid.uuid4().hex[:8]}'
+    """Creates an off-session payment using a saved payment method.
+
+    The idempotence key is deterministic for the internal order. Retrying the
+    same order after a timeout therefore cannot create a second charge.
+    """
+    idempotence_key = f'sub-rec-{order_id}'
     payload = {
-        'amount': {
-            'value': f'{amount_rub:.2f}',
-            'currency': 'RUB',
-        },
+        'amount': {'value': f'{amount_rub:.2f}', 'currency': 'RUB'},
         'capture': True,
         'payment_method_id': payment_method_id,
         'description': description,
@@ -158,11 +183,16 @@ async def create_yookassa_recurring_payment(
         },
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(YOOKASSA_API_URL, json=payload, headers=_auth_headers(idempotence_key)) as response:
-            data = await response.json()
+    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(
+            YOOKASSA_API_URL,
+            json=payload,
+            headers=_auth_headers(idempotence_key),
+        ) as response:
+            data = await _response_json(response)
             if response.status not in (200, 201):
-                error_desc = data.get('description', 'Неизвестная ошибка') if isinstance(data, dict) else f'HTTP {response.status}'
-                logger.error('ЮKassa recurring error %s: %s | payload=%s', response.status, error_desc, payload)
-                raise RuntimeError(f'ЮKassa API ошибка: {error_desc}')
+                # Do not log payload: it contains the saved payment-method token.
+                logger.warning('ЮKassa recurring error %s: %s', response.status, data.get('description'))
+                _raise_api_error(response.status, data)
             return data

@@ -159,8 +159,8 @@ async def main():
     traffic_tasks = asyncio.create_task(run_traffic_sync_scheduler(bot))
     # Явно отключаем истёкшие native-subscription клиенты в 3X-UI
     expired_key_tasks = asyncio.create_task(run_expired_key_reconciler())
-    # Запускаем планировщик автосписаний подписок
-    subscription_tasks = asyncio.create_task(run_subscription_billing_scheduler(bot, interval_seconds=3600))
+    # Проверяем автосписания каждые 5 минут
+    subscription_tasks = asyncio.create_task(run_subscription_billing_scheduler(bot, interval_seconds=300))
     background_tasks = [
         daily_tasks,
         update_tasks,
