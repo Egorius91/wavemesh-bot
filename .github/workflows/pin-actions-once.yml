@@ -1,0 +1,88 @@
+name: Pin latest GitHub Actions once
+
+on:
+  push:
+    branches:
+      - chore/pin-latest-github-actions
+
+permissions:
+  contents: write
+
+jobs:
+  pin-actions:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Pin action versions by full commit SHA
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path('.github/workflows/gitleaks.yml'): [
+                  (
+                      'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3',
+                      'actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0',
+                      1,
+                  ),
+              ],
+              Path('.github/workflows/quality.yml'): [
+                  (
+                      'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3',
+                      'actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0',
+                      1,
+                  ),
+                  (
+                      'actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0',
+                      'actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0',
+                      1,
+                  ),
+              ],
+              Path('.github/workflows/python-check.yml'): [
+                  (
+                      'actions/checkout@v4',
+                      'actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0',
+                      1,
+                  ),
+                  (
+                      'actions/setup-python@v5',
+                      'actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0',
+                      1,
+                  ),
+                  (
+                      'actions/upload-artifact@v4',
+                      'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1',
+                      3,
+                  ),
+              ],
+          }
+
+          for path, changes in replacements.items():
+              text = path.read_text(encoding='utf-8')
+              for old, new, expected_count in changes:
+                  actual_count = text.count(old)
+                  if actual_count != expected_count:
+                      raise SystemExit(
+                          f'{path}: expected {expected_count} occurrence(s) of {old!r}, found {actual_count}'
+                      )
+                  text = text.replace(old, new)
+              path.write_text(text, encoding='utf-8')
+
+          Path('.github/workflows/pin-actions-once.yml').unlink()
+          PY
+
+      - name: Commit pinned workflow references
+        run: |
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows
+          git commit -m 'Pin latest GitHub Actions by commit SHA'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
