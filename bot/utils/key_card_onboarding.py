@@ -197,21 +197,33 @@ async def send_subscription_key_card(
     from bot.services.vpn_api import get_subscription_url_for_key
     from bot.utils import key_sender_core
 
-    raw_value = await get_subscription_url_for_key(key_data)
-    if not raw_value:
+    key_id = key_data.get("id")
+    if key_id is None:
         await key_sender_core._send_error(
             messageable,
-            "Не удалось получить ссылку подключения. Повторите позже или обратитесь в поддержку.",
+            "Не удалось определить выбранный ключ.",
             fallback_markup,
         )
         return None
 
-    return await render_subscription_key_card(
-        messageable,
-        raw_value,
-        key_data["id"],
-        fallback_markup=fallback_markup,
-    )
+    try:
+        raw_value = await get_subscription_url_for_key(key_data)
+        if not raw_value:
+            raise RuntimeError("empty subscription URL")
+        return await render_subscription_key_card(
+            messageable,
+            raw_value,
+            key_id,
+            fallback_markup=fallback_markup,
+        )
+    except Exception as exc:
+        logger.warning("Could not render key card for key %s: %s", key_id, exc)
+        await key_sender_core._send_error(
+            messageable,
+            "Не удалось получить данные подключения. Повторите позже или обратитесь в поддержку.",
+            fallback_markup,
+        )
+        return None
 
 
 async def rerender_subscription_key_card(page_context, viewer_id: int) -> bool:
