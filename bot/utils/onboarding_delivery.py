@@ -61,7 +61,7 @@ async def send_onboarding_connection(
         )
         return False
 
-    if key.get("sub_id"):
+    if key.get("sub_id") and raw_value.startswith(("http://", "https://")):
         from bot.services.subscription_readiness import wait_for_subscription_ready
 
         ready = await wait_for_subscription_ready(
