@@ -46,7 +46,11 @@ async def send_onboarding_connection(
     try:
         raw_value = await _access_value(key)
     except Exception as exc:
-        logger.warning("Onboarding access value failed for key %s: %s", key.get("id"), exc)
+        logger.warning(
+            "Onboarding access value failed for key_id=%s error=%s",
+            key.get("id"),
+            type(exc).__name__,
+        )
         raw_value = None
 
     if not raw_value:
@@ -56,6 +60,22 @@ async def send_onboarding_connection(
             "Повторите попытку позже или обратитесь в поддержку @wavemesh.",
         )
         return False
+
+    if key.get("sub_id"):
+        from bot.services.subscription_readiness import wait_for_subscription_ready
+
+        ready = await wait_for_subscription_ready(
+            raw_value,
+            key_id=key.get("id"),
+            server_id=key.get("server_id"),
+        )
+        if not ready:
+            await safe_edit_or_send(
+                callback.message,
+                "⏳ <b>Подключение ещё подготавливается</b>\n\n"
+                "Ключ сохранён. Подождите немного и повторите открытие этого шага.",
+            )
+            return False
 
     replacements = {"%ключ%": format_key_copy_value(raw_value)}
     base_text = get_message_data(page_key, fallback_text).get("text") or fallback_text
