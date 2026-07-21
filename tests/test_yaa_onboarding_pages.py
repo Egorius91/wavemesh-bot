@@ -52,12 +52,17 @@ class OnboardingConnectionContextTests(unittest.IsolatedAsyncioTestCase):
             "app": "happ",
             "distribution": "google_play",
         }
+        raw_value = "https://example.invalid/subscription"
 
         with (
             patch(
                 "bot.utils.onboarding_delivery._access_value",
-                new=AsyncMock(return_value="https://example.invalid/subscription"),
+                new=AsyncMock(return_value=raw_value),
             ),
+            patch(
+                "bot.services.subscription_readiness.wait_for_subscription_ready",
+                new=AsyncMock(return_value=True),
+            ) as wait_ready,
             patch(
                 "bot.utils.message_editor.get_message_data",
                 return_value={"text": "Ссылка: %ключ%"},
@@ -73,13 +78,14 @@ class OnboardingConnectionContextTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await send_onboarding_connection(
                 callback,
-                {"id": 7, "sub_id": "sub-id"},
+                {"id": 7, "server_id": 3, "sub_id": "sub-id"},
                 page_key="onboarding_happ_connection_android",
                 fallback_text="Ссылка: %ключ%",
                 context=context,
             )
 
         self.assertTrue(result)
+        wait_ready.assert_awaited_once_with(raw_value, key_id=7, server_id=3)
         remember_mock.assert_called_once()
         kwargs = remember_mock.call_args.kwargs
         self.assertEqual(kwargs["page_key"], "onboarding_happ_connection_android")

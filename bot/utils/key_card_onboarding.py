@@ -193,7 +193,8 @@ async def send_subscription_key_card(
     key_data: dict,
     fallback_markup: Optional[InlineKeyboardMarkup] = None,
 ) -> Optional[Message]:
-    """Resolve and render the subscription URL for an existing key."""
+    """Resolve, verify, and render the subscription URL for an existing key."""
+    from bot.services.subscription_readiness import wait_for_subscription_ready
     from bot.services.vpn_api import get_subscription_url_for_key
     from bot.utils import key_sender_core
 
@@ -210,6 +211,21 @@ async def send_subscription_key_card(
         raw_value = await get_subscription_url_for_key(key_data)
         if not raw_value:
             raise RuntimeError("empty subscription URL")
+
+        ready = await wait_for_subscription_ready(
+            raw_value,
+            key_id=key_id,
+            server_id=key_data.get("server_id"),
+        )
+        if not ready:
+            await key_sender_core._send_error(
+                messageable,
+                "Ключ сохранён, но сервер всё ещё подготавливает данные подключения. "
+                "Подождите немного и нажмите «Показать ключ» ещё раз.",
+                fallback_markup,
+            )
+            return None
+
         return await render_subscription_key_card(
             messageable,
             raw_value,
@@ -217,7 +233,11 @@ async def send_subscription_key_card(
             fallback_markup=fallback_markup,
         )
     except Exception as exc:
-        logger.warning("Could not render key card for key %s: %s", key_id, exc)
+        logger.warning(
+            "Could not render key card for key_id=%s error=%s",
+            key_id,
+            type(exc).__name__,
+        )
         await key_sender_core._send_error(
             messageable,
             "Не удалось получить данные подключения. Повторите позже или обратитесь в поддержку.",
