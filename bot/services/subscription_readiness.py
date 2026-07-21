@@ -12,13 +12,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_READINESS_DELAYS: tuple[float, ...] = (0.0, 1.0, 2.0, 3.0, 5.0, 8.0, 8.0)
 DEFAULT_REQUEST_TIMEOUT = 5.0
+DEFAULT_MAX_WAIT_SECONDS = 30.0
 MAX_RESPONSE_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
 class SubscriptionProbe:
-    """Redacted result of one public subscription request."""
-
     status: Optional[int]
     content_length: int = 0
     has_metadata: bool = False
@@ -37,10 +36,8 @@ async def probe_subscription_url(
     url: str,
     timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT,
 ) -> SubscriptionProbe:
-    """Fetch a public subscription URL and return only non-secret metadata."""
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-    headers = {"User-Agent": "WaveMeshBot/subscription-readiness"}
-
+    headers = {"User-Agent": "WaveMeshBot/readiness"}
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, allow_redirects=True, headers=headers) as response:
@@ -51,7 +48,6 @@ async def probe_subscription_url(
                     has_metadata=bool(response.headers.get("Subscription-Userinfo")),
                 )
     except Exception as exc:
-        # Do not log the exception text here: connector errors may contain the URL.
         return SubscriptionProbe(status=None, error_type=type(exc).__name__)
 
 
@@ -62,34 +58,42 @@ async def wait_for_subscription_ready(
     server_id: int | str | None = None,
     delays: Sequence[float] = DEFAULT_READINESS_DELAYS,
     request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
+    max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
     probe: ProbeCallable | None = None,
     sleep: SleepCallable = asyncio.sleep,
 ) -> bool:
-    """Poll until the public subscription returns content and usage metadata."""
-    if not url or not delays:
+    if not url or not delays or max_wait_seconds <= 0:
         return False
 
     active_probe = probe or probe_subscription_url
     last_result = SubscriptionProbe(status=None)
-    attempts = len(delays)
+    attempt_limit = len(delays)
+    completed_attempts = 0
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max_wait_seconds
 
     for attempt, delay in enumerate(delays, start=1):
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
         if delay > 0:
-            await sleep(delay)
+            await sleep(min(delay, remaining))
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
 
+        completed_attempts = attempt
         try:
-            last_result = await active_probe(url, request_timeout)
+            last_result = await active_probe(url, min(request_timeout, remaining))
         except Exception as exc:
-            # Test/custom probes may raise. Keep logs redacted just like the HTTP probe.
             last_result = SubscriptionProbe(status=None, error_type=type(exc).__name__)
 
         logger.info(
-            "Subscription readiness key_id=%s server_id=%s attempt=%s/%s "
-            "status=%s bytes=%s metadata=%s ready=%s error=%s",
+            "Subscription readiness key_id=%s server_id=%s attempt=%s/%s status=%s bytes=%s metadata=%s ready=%s error=%s",
             key_id,
             server_id,
             attempt,
-            attempts,
+            attempt_limit,
             last_result.status,
             last_result.content_length,
             last_result.has_metadata,
@@ -100,11 +104,10 @@ async def wait_for_subscription_ready(
             return True
 
     logger.warning(
-        "Subscription readiness timeout key_id=%s server_id=%s attempts=%s "
-        "last_status=%s last_error=%s",
+        "Subscription readiness timeout key_id=%s server_id=%s attempts=%s last_status=%s last_error=%s",
         key_id,
         server_id,
-        attempts,
+        completed_attempts,
         last_result.status,
         last_result.error_type or "-",
     )
@@ -112,6 +115,7 @@ async def wait_for_subscription_ready(
 
 
 __all__ = [
+    "DEFAULT_MAX_WAIT_SECONDS",
     "DEFAULT_READINESS_DELAYS",
     "SubscriptionProbe",
     "probe_subscription_url",
