@@ -40,7 +40,7 @@ async def probe_subscription_url(
     headers = {"User-Agent": "WaveMeshBot/readiness"}
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url, allow_redirects=True, headers=headers) as response:
+            async with session.get(url, allow_redirects=False, headers=headers) as response:
                 body = await response.content.read(MAX_RESPONSE_BYTES)
                 return SubscriptionProbe(
                     status=response.status,
