@@ -1,11 +1,15 @@
+import sys
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from bot.services.subscription_readiness import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from bot.services.subscription_readiness import (  # noqa: E402
     SubscriptionProbe,
     wait_for_subscription_ready,
 )
-from bot.utils.key_card_onboarding import send_subscription_key_card
+from bot.utils.key_card_onboarding import send_subscription_key_card  # noqa: E402
 
 
 async def no_sleep(_delay: float) -> None:
