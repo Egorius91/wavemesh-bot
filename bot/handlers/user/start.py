@@ -9,6 +9,7 @@ from aiogram.exceptions import TelegramForbiddenError
 from config import ADMIN_IDS
 from database.requests import get_or_create_user, is_user_banned, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
 from bot.utils.text import escape_html, safe_edit_or_send
+from bot.services.internal_api import schedule_telegram_user_upsert
 from bot.services.channel_gate import (
     has_passed_channel_gate,
     mark_channel_gate_passed,
@@ -162,12 +163,24 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     username = message.from_user.username
     logger.info(f'CMD_START: User {user_id} started bot')
 
+    first_name = getattr(message.from_user, 'first_name', None)
+    last_name = getattr(message.from_user, 'last_name', None)
+
     (user, is_new) = get_or_create_user(
         user_id,
         username,
-        first_name=getattr(message.from_user, 'first_name', None),
-        last_name=getattr(message.from_user, 'last_name', None),
+        first_name=first_name,
+        last_name=last_name,
     )
+
+    schedule_telegram_user_upsert(
+        telegram_id=user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+        is_bot_blocked=False,
+    )
+
     if user.get('is_banned'):
         await safe_edit_or_send(message, '⛔ <b>Доступ заблокирован</b>\n\nВаш аккаунт заблокирован. Обратитесь в поддержку.', force_new=True)
         return
