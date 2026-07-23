@@ -126,9 +126,15 @@ async def main():
     dp = Dispatcher(storage=storage)
 
     from bot.middlewares.bot_blocked import BotBlockedResetMiddleware
+    from bot.middlewares.internal_api_shadow import InternalApiDashboardShadowMiddleware
+
     bot_blocked_reset = BotBlockedResetMiddleware()
+    internal_api_dashboard_shadow = InternalApiDashboardShadowMiddleware()
+
     dp.message.outer_middleware(bot_blocked_reset)
     dp.callback_query.outer_middleware(bot_blocked_reset)
+    dp.message.outer_middleware(internal_api_dashboard_shadow)
+    dp.callback_query.outer_middleware(internal_api_dashboard_shadow)
     
     # Регистрируем роутеры
     # Порядок важен: сначала более специфичные, потом общие
