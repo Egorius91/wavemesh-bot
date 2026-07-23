@@ -21,6 +21,10 @@ from bot.services import scheduler as scheduler_module
 from bot.services.expiry_notifications import check_and_send_expiry_notifications as clean_expiry_notifications
 from bot.services.expired_key_reconciler import run_expired_key_reconciler
 from bot.services.subscription_billing import run_subscription_billing_scheduler
+from bot.services.internal_api import (
+    internal_api_client,
+    startup_probe as internal_api_startup_probe,
+)
 
 scheduler_module.check_and_send_expiry_notifications = clean_expiry_notifications
 run_daily_tasks = scheduler_module.run_daily_tasks
@@ -66,6 +70,9 @@ async def on_startup(bot: Bot):
     # Применяем миграции БД
     run_migrations()
     apply_wavemesh_branding_defaults()
+
+    # Не блокирующая проверка связи с WaveMesh SaaS Internal API
+    await internal_api_startup_probe()
     
     # Информация о боте
     bot_info = await bot.get_me()
@@ -102,6 +109,7 @@ async def on_shutdown(bot: Bot):
     
     # Закрываем все VPN API сессии
     await close_all_clients()
+    await internal_api_client.close()
     
     logger.info("✅ Бот остановлен")
 
