@@ -22,11 +22,13 @@ from bot.services import scheduler as scheduler_module
 from bot.services.expiry_notifications import check_and_send_expiry_notifications as clean_expiry_notifications
 from bot.services.expired_key_reconciler import run_expired_key_reconciler
 from bot.services.subscription_billing import run_subscription_billing_scheduler
-from bot.services.access_shadow import schedule_access_shadow_backfill
 from bot.services.access_shadow_outbox import (
     ensure_access_shadow_outbox_schema,
     start_access_shadow_outbox_worker,
     stop_access_shadow_outbox_worker,
+)
+from bot.services.access_shadow_reconciliation import (
+    run_access_shadow_startup_reconciliation,
 )
 from bot.services.internal_api import (
     internal_api_client,
@@ -73,7 +75,7 @@ async def on_startup(bot: Bot):
     internal_api_ready = await internal_api_startup_probe()
     if internal_api_ready:
         start_access_shadow_outbox_worker()
-        schedule_access_shadow_backfill()
+        await run_access_shadow_startup_reconciliation()
 
     bot_info = await bot.get_me()
     bot.my_username = bot_info.username
