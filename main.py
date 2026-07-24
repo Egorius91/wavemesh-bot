@@ -36,11 +36,16 @@ from bot.services.internal_api import (
 )
 from bot.services.runtime_mode import env_flag, saas_client_mode_enabled
 from bot.services.xui_write_guard import install_xui_write_guard
+from bot.services.commercial_write_guard import install_commercial_write_guard
 
 scheduler_module.check_and_send_expiry_notifications = clean_expiry_notifications
 run_daily_tasks = scheduler_module.run_daily_tasks
 run_update_check_scheduler = scheduler_module.run_update_check_scheduler
 run_traffic_sync_scheduler = scheduler_module.run_traffic_sync_scheduler
+
+# Install before importing routers so `from bot.services.billing import ...`
+# statements inside handlers receive already-guarded entry points.
+install_commercial_write_guard()
 
 from bot.handlers.user import router as user_router
 from bot.handlers.admin import admin_router
