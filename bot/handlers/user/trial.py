@@ -3,6 +3,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
 from bot.utils.text import safe_edit_or_send
+from bot.services.runtime_mode import legacy_commercial_writes_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,13 @@ router = Router()
 @router.callback_query(F.data == 'trial_subscription')
 async def show_trial_subscription(callback: CallbackQuery):
     """Показывает страницу пробной подписки."""
+    if not legacy_commercial_writes_enabled():
+        await callback.answer(
+            'Пробный период управляется через WaveMesh SaaS',
+            show_alert=True,
+        )
+        return
+
     from database.requests import is_trial_enabled, get_trial_tariff_id, has_used_trial
     from bot.utils.page_renderer import render_page
 
@@ -33,7 +41,18 @@ async def show_trial_subscription(callback: CallbackQuery):
 
 @router.callback_query(F.data == 'trial_activate')
 async def activate_trial_subscription(callback: CallbackQuery, state: FSMContext):
-    """Активирует пробную подписку: создаёт ключ через стандартный механизм."""
+    """Активирует пробную подписку через legacy-механизм, если он разрешён."""
+    if not legacy_commercial_writes_enabled():
+        logger.warning(
+            'Blocked legacy trial activation in SaaS client mode: telegram_id=%s',
+            callback.from_user.id,
+        )
+        await callback.answer(
+            'Пробный период управляется через WaveMesh SaaS',
+            show_alert=True,
+        )
+        return
+
     from database.requests import is_trial_enabled, get_trial_tariff_id, has_used_trial, get_tariff_by_id, get_or_create_user, mark_trial_used, create_initial_vpn_key, create_pending_order, complete_order
     from bot.handlers.user.payments.keys_config import start_new_key_config
 
@@ -71,7 +90,6 @@ async def activate_trial_subscription(callback: CallbackQuery, state: FSMContext
     (_, order_id) = create_pending_order(user_id=internal_user_id, tariff_id=tariff_id, payment_type='trial', vpn_key_id=key_id)
     complete_order(order_id)
 
-    # Уведомление администраторов об активации пробной подписки
     try:
         from bot.services.notifications import notify_admins_payment
         from database.requests import find_order_by_order_id
