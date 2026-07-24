@@ -71,8 +71,9 @@ async def on_startup(bot: Bot):
     apply_wavemesh_branding_defaults()
 
     # Не блокирующая проверка связи с WaveMesh SaaS Internal API
-    await internal_api_startup_probe()
-    schedule_access_shadow_backfill()
+    internal_api_ready = await internal_api_startup_probe()
+    if internal_api_ready:
+        schedule_access_shadow_backfill()
 
     # Информация о боте
     bot_info = await bot.get_me()
