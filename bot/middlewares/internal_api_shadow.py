@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
+from bot.services.access_shadow import sync_user_access_shadows
 from bot.services.internal_api import InternalApiError, internal_api_client
 from database.requests import get_user_keys_for_display
 
@@ -35,10 +36,10 @@ def _my_keys_trigger(event: TelegramObject) -> str | None:
 
 def schedule_dashboard_shadow_read(*, telegram_id: int, trigger: str) -> None:
     """
-    Сравнивает число локальных ключей и SaaS-доступов только в журнале.
+    Refreshes safe access projections and compares aggregate counts in logs.
 
-    Пользовательский экран продолжает строиться исключительно из локальной БД.
-    Ошибки SaaS или сравнения не влияют на выполнение обработчика Telegram.
+    The user-facing screen continues to use only the local database. SaaS,
+    network, projection, or comparison failures never affect Telegram output.
     """
     if not internal_api_client.configured:
         return
@@ -54,6 +55,21 @@ def schedule_dashboard_shadow_read(*, telegram_id: int, trigger: str) -> None:
                 trigger,
             )
             return
+
+        sync_stats = {"selected": 0, "synced": 0, "failed": 0}
+        try:
+            sync_stats = await sync_user_access_shadows(
+                telegram_id,
+                limit=max(20, len(local_keys) + 5),
+                reason=f"my_keys_{trigger}",
+            )
+        except Exception:
+            logger.exception(
+                "Unexpected WaveMesh access shadow refresh error: "
+                "telegram_id=%s trigger=%s",
+                telegram_id,
+                trigger,
+            )
 
         try:
             dashboard = await internal_api_client.get_telegram_dashboard(telegram_id)
@@ -94,12 +110,15 @@ def schedule_dashboard_shadow_read(*, telegram_id: int, trigger: str) -> None:
 
         logger.info(
             "WaveMesh dashboard shadow-read completed: "
-            "telegram_id=%s trigger=%s status=%s local_keys=%s saas_accesses=%s",
+            "telegram_id=%s trigger=%s status=%s local_keys=%s "
+            "saas_accesses=%s synced=%s sync_failed=%s",
             telegram_id,
             trigger,
             status,
             local_count,
             saas_count,
+            sync_stats["synced"],
+            sync_stats["failed"],
         )
 
     task = asyncio.create_task(
@@ -111,7 +130,7 @@ def schedule_dashboard_shadow_read(*, telegram_id: int, trigger: str) -> None:
 
 
 class InternalApiDashboardShadowMiddleware(BaseMiddleware):
-    """Запускает dashboard shadow-read после успешного показа «Моих ключей»."""
+    """Runs dashboard shadow work after successfully rendering «Мои ключи»."""
 
     async def __call__(
         self,

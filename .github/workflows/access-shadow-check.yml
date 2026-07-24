@@ -1,0 +1,38 @@
+name: Access shadow checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  access-shadow-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check -q -r requirements.txt
+
+      - name: Prepare config
+        run: cp config.example.py config.py
+
+      - name: Compile integration files
+        run: |
+          python -m py_compile \
+            bot/services/internal_api.py \
+            bot/services/access_shadow.py \
+            bot/middlewares/internal_api_shadow.py \
+            bot/utils/key_sender.py \
+            main.py
+
+      - name: Access shadow tests
+        run: python -m unittest -v tests.test_access_shadow_sync

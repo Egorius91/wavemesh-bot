@@ -21,6 +21,7 @@ from bot.services import scheduler as scheduler_module
 from bot.services.expiry_notifications import check_and_send_expiry_notifications as clean_expiry_notifications
 from bot.services.expired_key_reconciler import run_expired_key_reconciler
 from bot.services.subscription_billing import run_subscription_billing_scheduler
+from bot.services.access_shadow import schedule_access_shadow_backfill
 from bot.services.internal_api import (
     internal_api_client,
     startup_probe as internal_api_startup_probe,
@@ -47,9 +48,9 @@ logging.basicConfig(
     handlers=[
         logging.StreamHandler(),
         RotatingFileHandler(
-            "logs/bot.log", 
+            "logs/bot.log",
             maxBytes=1024 * 1024,  # 1 мегабайт
-            backupCount=3, 
+            backupCount=3,
             encoding="utf-8"
         )
     ]
@@ -61,36 +62,36 @@ logging.getLogger("aiohttp").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-
-
 async def on_startup(bot: Bot):
     """Действия при запуске бота."""
     logger.info("🚀 Бот запускается...")
-    
+
     # Применяем миграции БД
     run_migrations()
     apply_wavemesh_branding_defaults()
 
     # Не блокирующая проверка связи с WaveMesh SaaS Internal API
-    await internal_api_startup_probe()
-    
+    internal_api_ready = await internal_api_startup_probe()
+    if internal_api_ready:
+        schedule_access_shadow_backfill()
+
     # Информация о боте
     bot_info = await bot.get_me()
     bot.my_username = bot_info.username
     logger.info(f"✅ Бот запущен: @{bot_info.username}")
-    
+
     # Если обновления заблокированы — сразу уведомляем админов
     from bot.utils.update_block import is_update_blocked, get_blocked_message
     if is_update_blocked():
         from config import ADMIN_IDS
         from aiogram.types import InlineKeyboardButton
         from aiogram.utils.keyboard import InlineKeyboardBuilder
-        
+
         msg = get_blocked_message()
         builder = InlineKeyboardBuilder()
         builder.row(InlineKeyboardButton(text="✅ OK", callback_data="dismiss_msg"))
         kb = builder.as_markup()
-        
+
         for admin_id in ADMIN_IDS:
             try:
                 await bot.send_message(
@@ -106,11 +107,11 @@ async def on_startup(bot: Bot):
 async def on_shutdown(bot: Bot):
     """Действия при остановке бота."""
     logger.info("🛑 Бот останавливается...")
-    
+
     # Закрываем все VPN API сессии
     await close_all_clients()
     await internal_api_client.close()
-    
+
     logger.info("✅ Бот остановлен")
 
 
@@ -118,7 +119,7 @@ async def main():
     """Главная функция запуска бота."""
     # Импортируем кастомную сессию с fallback для ошибок Markdown
     from bot.middlewares.parse_mode_fallback import SafeParseSession
-    
+
     # Создаём бота с кастомной сессией и диспетчер
     session = SafeParseSession()
     bot = Bot(token=BOT_TOKEN, session=session)
@@ -135,16 +136,16 @@ async def main():
     dp.callback_query.outer_middleware(bot_blocked_reset)
     dp.message.outer_middleware(internal_api_dashboard_shadow)
     dp.callback_query.outer_middleware(internal_api_dashboard_shadow)
-    
+
     # Регистрируем роутеры
     # Порядок важен: сначала более специфичные, потом общие
     dp.include_router(admin_router)           # Админ-панель (общая)
     dp.include_router(user_router)            # Пользователь (имеет строгий внутренний порядок)
-    
+
     # Глобальный обработчик ошибок сети
     from aiogram.exceptions import TelegramNetworkError
     from aiogram.types import ErrorEvent
-    
+
     @dp.errors()
     async def global_error_handler(event: ErrorEvent):
         """Перехватывает сетевые ошибки Telegram API и пишет короткий warning."""
@@ -155,16 +156,14 @@ async def main():
         # Остальные ошибки логируем как обычно
         logger.error(f"Необработанная ошибка: {exception}", exc_info=True)
         return True
-    
+
     # Регистрируем startup/shutdown
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
-    
+
     # Удаляем старые обновления и запускаем polling
     await bot.delete_webhook(drop_pending_updates=True)
-    
 
-    
     # Запускаем планировщик ежедневных задач (статистика + бэкапы)
     daily_tasks = asyncio.create_task(run_daily_tasks(bot))
     # Запускаем планировщик проверки обновлений
@@ -182,7 +181,7 @@ async def main():
         expired_key_tasks,
         subscription_tasks,
     ]
-    
+
     try:
         await dp.start_polling(bot)
     finally:

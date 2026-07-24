@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardMarkup
 
+from bot.services.access_shadow import schedule_key_access_shadow_sync
+
 from . import key_sender_core as _core
 from .key_card_onboarding import (
     KEY_CARD_CONTEXT_KEY_ID,
@@ -22,6 +24,13 @@ async def send_key_with_qr(
     is_new: bool = False,
 ):
     """Start onboarding for new keys and expose it on existing key cards."""
+    key_id = key_data.get("id")
+    if key_id is not None:
+        schedule_key_access_shadow_sync(
+            int(key_id),
+            reason="key_delivery_new" if is_new else "key_delivery_existing",
+        )
+
     if is_new:
         from bot.handlers.user.onboarding import start_key_onboarding
 
@@ -41,7 +50,7 @@ async def send_key_with_qr(
         key_data,
         key_manage_markup=add_onboarding_button(
             key_manage_markup,
-            key_data.get("id"),
+            key_id,
         ),
         is_new=False,
     )
