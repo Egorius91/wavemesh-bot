@@ -33,6 +33,7 @@ jobs:
             bot/services/access_shadow_outbox.py \
             bot/middlewares/internal_api_shadow.py \
             bot/utils/key_sender.py \
+            database/access_shadow_outbox_triggers.py \
             database/db_keys_shadow.py \
             database/db_keys_shadow_outbox.py \
             database/requests.py \
@@ -43,4 +44,5 @@ jobs:
           python -m unittest -v \
             tests.test_access_shadow_sync \
             tests.test_access_shadow_outbox \
+            tests.test_access_shadow_outbox_triggers \
             tests.test_db_keys_shadow_hooks
