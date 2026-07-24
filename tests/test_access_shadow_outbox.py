@@ -4,7 +4,6 @@ import asyncio
 import sqlite3
 import tempfile
 import unittest
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -39,6 +38,14 @@ class AccessShadowOutboxTests(unittest.TestCase):
         self.db_patch.stop()
         self.tempdir.cleanup()
 
+    def _configured_client(self):
+        return (
+            patch.object(outbox.internal_api_client, "enabled", True),
+            patch.object(outbox.internal_api_client, "base_url", "https://example.test"),
+            patch.object(outbox.internal_api_client, "tenant_id", "tenant"),
+            patch.object(outbox.internal_api_client, "token", "token"),
+        )
+
     def test_enqueue_is_durable_and_idempotent(self) -> None:
         self.assertTrue(outbox.enqueue_access_shadow_snapshot(self.snapshot, reason="delete"))
         self.assertFalse(outbox.enqueue_access_shadow_snapshot(self.snapshot, reason="delete"))
@@ -51,8 +58,12 @@ class AccessShadowOutboxTests(unittest.TestCase):
 
     def test_successful_delivery_removes_event(self) -> None:
         outbox.enqueue_access_shadow_snapshot(self.snapshot, reason="delete")
+        enabled, base_url, tenant_id, token = self._configured_client()
         with (
-            patch.object(outbox.internal_api_client, "configured", True),
+            enabled,
+            base_url,
+            tenant_id,
+            token,
             patch.object(
                 outbox,
                 "sync_access_shadow_snapshot",
@@ -70,8 +81,12 @@ class AccessShadowOutboxTests(unittest.TestCase):
 
     def test_failure_keeps_event_and_increments_attempts(self) -> None:
         outbox.enqueue_access_shadow_snapshot(self.snapshot, reason="delete")
+        enabled, base_url, tenant_id, token = self._configured_client()
         with (
-            patch.object(outbox.internal_api_client, "configured", True),
+            enabled,
+            base_url,
+            tenant_id,
+            token,
             patch.object(
                 outbox,
                 "sync_access_shadow_snapshot",
