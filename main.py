@@ -14,6 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN
 from database.migrations import run_migrations
+from database.access_shadow_outbox_triggers import ensure_access_shadow_outbox_triggers
 from bot.services.branding import apply_wavemesh_branding_defaults
 
 from bot.services.vpn_api import close_all_clients
@@ -37,16 +38,11 @@ run_daily_tasks = scheduler_module.run_daily_tasks
 run_update_check_scheduler = scheduler_module.run_update_check_scheduler
 run_traffic_sync_scheduler = scheduler_module.run_traffic_sync_scheduler
 
-# Импорт роутеров
 from bot.handlers.user import router as user_router
 from bot.handlers.admin import admin_router
 
-
-# Создаём папку для логов если её нет (важно сделать до basicConfig)
 os.makedirs("logs", exist_ok=True)
 
-
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] [%(levelname)s] [%(name)s] - %(message)s",
@@ -54,16 +50,14 @@ logging.basicConfig(
         logging.StreamHandler(),
         RotatingFileHandler(
             "logs/bot.log",
-            maxBytes=1024 * 1024,  # 1 мегабайт
+            maxBytes=1024 * 1024,
             backupCount=3,
             encoding="utf-8"
         )
     ]
 )
 
-# Уменьшаем шум от aiohttp
 logging.getLogger("aiohttp").setLevel(logging.WARNING)
-
 logger = logging.getLogger(__name__)
 
 
@@ -71,23 +65,20 @@ async def on_startup(bot: Bot):
     """Действия при запуске бота."""
     logger.info("🚀 Бот запускается...")
 
-    # Применяем миграции БД
     run_migrations()
     apply_wavemesh_branding_defaults()
     ensure_access_shadow_outbox_schema()
+    ensure_access_shadow_outbox_triggers()
 
-    # Не блокирующая проверка связи с WaveMesh SaaS Internal API
     internal_api_ready = await internal_api_startup_probe()
     if internal_api_ready:
         start_access_shadow_outbox_worker()
         schedule_access_shadow_backfill()
 
-    # Информация о боте
     bot_info = await bot.get_me()
     bot.my_username = bot_info.username
     logger.info(f"✅ Бот запущен: @{bot_info.username}")
 
-    # Если обновления заблокированы — сразу уведомляем админов
     from bot.utils.update_block import is_update_blocked, get_blocked_message
     if is_update_blocked():
         from config import ADMIN_IDS
@@ -116,7 +107,6 @@ async def on_shutdown(bot: Bot):
     logger.info("🛑 Бот останавливается...")
 
     await stop_access_shadow_outbox_worker()
-    # Закрываем все VPN API сессии
     await close_all_clients()
     await internal_api_client.close()
 
@@ -125,10 +115,8 @@ async def on_shutdown(bot: Bot):
 
 async def main():
     """Главная функция запуска бота."""
-    # Импортируем кастомную сессию с fallback для ошибок Markdown
     from bot.middlewares.parse_mode_fallback import SafeParseSession
 
-    # Создаём бота с кастомной сессией и диспетчер
     session = SafeParseSession()
     bot = Bot(token=BOT_TOKEN, session=session)
     storage = MemoryStorage()
@@ -145,43 +133,33 @@ async def main():
     dp.message.outer_middleware(internal_api_dashboard_shadow)
     dp.callback_query.outer_middleware(internal_api_dashboard_shadow)
 
-    # Регистрируем роутеры
-    # Порядок важен: сначала более специфичные, потом общие
-    dp.include_router(admin_router)           # Админ-панель (общая)
-    dp.include_router(user_router)            # Пользователь (имеет строгий внутренний порядок)
+    dp.include_router(admin_router)
+    dp.include_router(user_router)
 
-    # Глобальный обработчик ошибок сети
     from aiogram.exceptions import TelegramNetworkError
     from aiogram.types import ErrorEvent
 
     @dp.errors()
     async def global_error_handler(event: ErrorEvent):
-        """Перехватывает сетевые ошибки Telegram API и пишет короткий warning."""
         exception = event.exception
         if isinstance(exception, TelegramNetworkError):
             logger.warning(f"⚠️ Нет связи с Telegram API: {exception}")
-            return True  # Ошибка обработана, не пробрасываем дальше
-        # Остальные ошибки логируем как обычно
+            return True
         logger.error(f"Необработанная ошибка: {exception}", exc_info=True)
         return True
 
-    # Регистрируем startup/shutdown
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    # Удаляем старые обновления и запускаем polling
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # Запускаем планировщик ежедневных задач (статистика + бэкапы)
     daily_tasks = asyncio.create_task(run_daily_tasks(bot))
-    # Запускаем планировщик проверки обновлений
     update_tasks = asyncio.create_task(run_update_check_scheduler(bot))
-    # Запускаем планировщик синхронизации трафика (каждые 5 мин)
     traffic_tasks = asyncio.create_task(run_traffic_sync_scheduler(bot))
-    # Явно отключаем истёкшие native-subscription клиенты в 3X-UI
     expired_key_tasks = asyncio.create_task(run_expired_key_reconciler())
-    # Проверяем автосписания каждые 5 минут
-    subscription_tasks = asyncio.create_task(run_subscription_billing_scheduler(bot, interval_seconds=300))
+    subscription_tasks = asyncio.create_task(
+        run_subscription_billing_scheduler(bot, interval_seconds=300)
+    )
     background_tasks = [
         daily_tasks,
         update_tasks,
@@ -201,7 +179,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Запускаем бота
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
