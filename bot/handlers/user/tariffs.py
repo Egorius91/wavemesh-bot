@@ -4,6 +4,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.filters import Command
 from bot.utils.text import safe_edit_or_send
 from database.requests import is_user_banned
+from bot.services.runtime_mode import legacy_commercial_writes_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +21,7 @@ async def cmd_buy(message: Message):
 
 
 async def _render_buy_page(target):
-    """Рендерит страницу покупки ключа.
-    
-    Args:
-        target: Message или CallbackQuery
-    """
+    """Рендерит страницу покупки ключа."""
     from database.requests import (
         is_crypto_configured, is_stars_enabled, is_cards_enabled,
         is_yookassa_qr_configured, is_wata_configured, is_platega_configured,
@@ -35,10 +32,7 @@ async def _render_buy_page(target):
     from bot.utils.page_renderer import render_page
     from bot.keyboards.admin import home_only_kb
 
-    if isinstance(target, CallbackQuery):
-        telegram_id = target.from_user.id
-    else:
-        telegram_id = target.from_user.id
+    telegram_id = target.from_user.id
 
     crypto_configured = is_crypto_configured()
     stars_enabled = is_stars_enabled()
@@ -49,7 +43,6 @@ async def _render_buy_page(target):
     cardlink_enabled = is_cardlink_configured()
     demo_enabled = is_demo_payment_enabled()
 
-    # Проверка: хотя бы один способ оплаты настроен
     if not crypto_configured and not stars_enabled and not cards_enabled and not yookassa_qr and not wata_enabled and not platega_enabled and not cardlink_enabled and not demo_enabled:
         msg = target.message if isinstance(target, CallbackQuery) else target
         await safe_edit_or_send(
@@ -60,16 +53,26 @@ async def _render_buy_page(target):
         )
         return
 
-    # Создаём pending order для контекста system-кнопок
-    user_id = get_user_internal_id(telegram_id)
     order_id = None
-    if user_id:
-        (_, order_id) = create_pending_order(user_id=user_id, tariff_id=None, payment_type=None, vpn_key_id=None)
+    if legacy_commercial_writes_enabled():
+        user_id = get_user_internal_id(telegram_id)
+        if user_id:
+            (_, order_id) = create_pending_order(
+                user_id=user_id,
+                tariff_id=None,
+                payment_type=None,
+                vpn_key_id=None,
+            )
+    else:
+        logger.info(
+            "Skipped legacy pending order in SaaS client mode: telegram_id=%s",
+            telegram_id,
+        )
 
-    # Контекст для system-кнопок оплаты
     context = {
         'order_id': order_id,
         'telegram_id': telegram_id,
+        'saas_client_mode': not legacy_commercial_writes_enabled(),
     }
 
     await render_page(
@@ -84,4 +87,4 @@ async def _render_buy_page(target):
 async def buy_key_handler(callback: CallbackQuery):
     """Страница «Купить ключ» с условиями и способами оплаты."""
     await _render_buy_page(callback)
-    await callback.answer()
+    await callback.answer()
