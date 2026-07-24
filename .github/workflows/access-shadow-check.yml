@@ -30,9 +30,11 @@ jobs:
           python -m py_compile \
             bot/services/internal_api.py \
             bot/services/access_shadow.py \
+            bot/services/access_shadow_outbox.py \
             bot/middlewares/internal_api_shadow.py \
             bot/utils/key_sender.py \
             database/db_keys_shadow.py \
+            database/db_keys_shadow_outbox.py \
             database/requests.py \
             main.py
 
@@ -40,4 +42,5 @@ jobs:
         run: |
           python -m unittest -v \
             tests.test_access_shadow_sync \
+            tests.test_access_shadow_outbox \
             tests.test_db_keys_shadow_hooks
