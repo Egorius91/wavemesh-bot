@@ -34,6 +34,7 @@ from bot.services.internal_api import (
     internal_api_client,
     startup_probe as internal_api_startup_probe,
 )
+from bot.services.runtime_mode import env_flag, saas_client_mode_enabled
 
 scheduler_module.check_and_send_expiry_notifications = clean_expiry_notifications
 run_daily_tasks = scheduler_module.run_daily_tasks
@@ -73,9 +74,21 @@ async def on_startup(bot: Bot):
     ensure_access_shadow_outbox_triggers()
 
     internal_api_ready = await internal_api_startup_probe()
-    if internal_api_ready:
+    access_shadow_enabled = env_flag(
+        "WAVEMESH_ACCESS_SHADOW_SYNC_ENABLED",
+        default=False,
+    )
+
+    if internal_api_ready and access_shadow_enabled:
         start_access_shadow_outbox_worker()
         await run_access_shadow_startup_reconciliation()
+    elif internal_api_ready:
+        logger.info(
+            "WaveMesh access shadow worker and reconciliation are disabled"
+        )
+
+    if saas_client_mode_enabled():
+        logger.info("WaveMesh SaaS client mode is enabled")
 
     bot_info = await bot.get_me()
     bot.my_username = bot_info.username
@@ -155,20 +168,50 @@ async def main():
 
     await bot.delete_webhook(drop_pending_updates=True)
 
-    daily_tasks = asyncio.create_task(run_daily_tasks(bot))
-    update_tasks = asyncio.create_task(run_update_check_scheduler(bot))
-    traffic_tasks = asyncio.create_task(run_traffic_sync_scheduler(bot))
-    expired_key_tasks = asyncio.create_task(run_expired_key_reconciler())
-    subscription_tasks = asyncio.create_task(
-        run_subscription_billing_scheduler(bot, interval_seconds=300)
-    )
-    background_tasks = [
-        daily_tasks,
-        update_tasks,
-        traffic_tasks,
-        expired_key_tasks,
-        subscription_tasks,
+    background_tasks: list[asyncio.Task] = []
+    task_specs = [
+        (
+            "WAVEMESH_LEGACY_DAILY_TASKS_ENABLED",
+            "legacy daily tasks",
+            lambda: run_daily_tasks(bot),
+        ),
+        (
+            "WAVEMESH_LEGACY_UPDATE_CHECK_ENABLED",
+            "legacy update check",
+            lambda: run_update_check_scheduler(bot),
+        ),
+        (
+            "WAVEMESH_LEGACY_TRAFFIC_SYNC_ENABLED",
+            "legacy traffic sync",
+            lambda: run_traffic_sync_scheduler(bot),
+        ),
+        (
+            "WAVEMESH_LEGACY_EXPIRED_RECONCILER_ENABLED",
+            "legacy expired subscription reconciler",
+            run_expired_key_reconciler,
+        ),
+        (
+            "WAVEMESH_LEGACY_SUBSCRIPTION_BILLING_ENABLED",
+            "legacy subscription billing",
+            lambda: run_subscription_billing_scheduler(
+                bot,
+                interval_seconds=300,
+            ),
+        ),
     ]
+
+    for flag_name, task_name, coroutine_factory in task_specs:
+        default_enabled = not saas_client_mode_enabled()
+        if env_flag(flag_name, default=default_enabled):
+            background_tasks.append(
+                asyncio.create_task(
+                    coroutine_factory(),
+                    name=task_name.replace(" ", "-"),
+                )
+            )
+            logger.info("%s enabled by %s", task_name, flag_name)
+        else:
+            logger.info("%s disabled by %s", task_name, flag_name)
 
     try:
         await dp.start_polling(bot)
