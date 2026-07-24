@@ -22,6 +22,11 @@ from bot.services.expiry_notifications import check_and_send_expiry_notification
 from bot.services.expired_key_reconciler import run_expired_key_reconciler
 from bot.services.subscription_billing import run_subscription_billing_scheduler
 from bot.services.access_shadow import schedule_access_shadow_backfill
+from bot.services.access_shadow_outbox import (
+    ensure_access_shadow_outbox_schema,
+    start_access_shadow_outbox_worker,
+    stop_access_shadow_outbox_worker,
+)
 from bot.services.internal_api import (
     internal_api_client,
     startup_probe as internal_api_startup_probe,
@@ -69,10 +74,12 @@ async def on_startup(bot: Bot):
     # Применяем миграции БД
     run_migrations()
     apply_wavemesh_branding_defaults()
+    ensure_access_shadow_outbox_schema()
 
     # Не блокирующая проверка связи с WaveMesh SaaS Internal API
     internal_api_ready = await internal_api_startup_probe()
     if internal_api_ready:
+        start_access_shadow_outbox_worker()
         schedule_access_shadow_backfill()
 
     # Информация о боте
@@ -108,6 +115,7 @@ async def on_shutdown(bot: Bot):
     """Действия при остановке бота."""
     logger.info("🛑 Бот останавливается...")
 
+    await stop_access_shadow_outbox_worker()
     # Закрываем все VPN API сессии
     await close_all_clients()
     await internal_api_client.close()
