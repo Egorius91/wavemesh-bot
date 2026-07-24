@@ -5,7 +5,8 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
-from typing import Any, Callable
+from types import ModuleType
+from typing import Any, Callable, Iterable
 
 from bot.services.runtime_mode import legacy_commercial_writes_enabled
 
@@ -20,7 +21,7 @@ _BLOCKED_ASYNC_RESULT = (
 
 # Public billing entry points which may create provider payments, mark orders paid,
 # create/renew keys, or otherwise mutate commercial state.
-_EXPLICIT_ENTRY_POINTS = {
+_BILLING_ENTRY_POINTS = {
     "process_payment_order",
     "process_crypto_payment",
     "create_yookassa_qr_payment",
@@ -33,17 +34,22 @@ _EXPLICIT_ENTRY_POINTS = {
     "check_cardlink_payment",
 }
 
+# Database entry points used directly by Telegram payment handlers before billing.
+_DATABASE_ENTRY_POINTS = {
+    "create_pending_order",
+    "complete_order",
+    "update_order_tariff",
+    "save_yookassa_payment_id",
+    "save_order_subscription_context",
+    "update_payment_key_id",
+}
 
-def _is_commercial_entry_point(name: str, value: Any) -> bool:
-    if name.startswith("_") or not callable(value):
-        return False
-    if name in _EXPLICIT_ENTRY_POINTS:
-        return True
-    lowered = name.lower()
-    return (
-        (lowered.startswith("create_") or lowered.startswith("process_"))
-        and ("payment" in lowered or "order" in lowered)
-    )
+# Recurring YooKassa functions are imported directly from their service module.
+_RECURRING_ENTRY_POINTS = {
+    "create_yookassa_initial_subscription_payment",
+    "charge_saved_payment_method",
+    "create_recurring_payment",
+}
 
 
 def _blocked_message(name: str) -> str:
@@ -57,10 +63,11 @@ def _wrap_async(name: str, function: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(function)
     async def guarded(*args: Any, **kwargs: Any) -> Any:
         if not legacy_commercial_writes_enabled():
-            logger.warning(_blocked_message(name))
+            message = _blocked_message(name)
+            logger.warning(message)
             if name.startswith("process_"):
                 return _BLOCKED_ASYNC_RESULT
-            raise RuntimeError(_blocked_message(name))
+            raise RuntimeError(message)
         return await function(*args, **kwargs)
 
     setattr(guarded, "__wavemesh_commercial_guard__", True)
@@ -71,26 +78,23 @@ def _wrap_sync(name: str, function: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(function)
     def guarded(*args: Any, **kwargs: Any) -> Any:
         if not legacy_commercial_writes_enabled():
-            logger.warning(_blocked_message(name))
-            raise RuntimeError(_blocked_message(name))
+            message = _blocked_message(name)
+            logger.warning(message)
+            raise RuntimeError(message)
         return function(*args, **kwargs)
 
     setattr(guarded, "__wavemesh_commercial_guard__", True)
     return guarded
 
 
-def install_commercial_write_guard() -> int:
-    """Wrap billing entry points before Telegram handlers import them."""
-    global _GUARD_INSTALLED
-
-    if _GUARD_INSTALLED:
-        return 0
-
-    from bot.services import billing
-
+def _guard_module_entry_points(
+    module: ModuleType,
+    entry_points: Iterable[str],
+) -> int:
     guarded_count = 0
-    for name, function in list(vars(billing).items()):
-        if not _is_commercial_entry_point(name, function):
+    for name in entry_points:
+        function = getattr(module, name, None)
+        if not callable(function):
             continue
         if getattr(function, "__wavemesh_commercial_guard__", False):
             continue
@@ -100,8 +104,49 @@ def install_commercial_write_guard() -> int:
             if inspect.iscoroutinefunction(function)
             else _wrap_sync(name, function)
         )
-        setattr(billing, name, wrapper)
+        setattr(module, name, wrapper)
         guarded_count += 1
+    return guarded_count
+
+
+def _discover_billing_entry_points(module: ModuleType) -> set[str]:
+    names = set(_BILLING_ENTRY_POINTS)
+    for name, value in vars(module).items():
+        if name.startswith("_") or not callable(value):
+            continue
+        lowered = name.lower()
+        if (
+            (lowered.startswith("create_") or lowered.startswith("process_"))
+            and ("payment" in lowered or "order" in lowered)
+        ):
+            names.add(name)
+    return names
+
+
+def install_commercial_write_guard() -> int:
+    """Wrap commercial writes before Telegram handlers import their functions."""
+    global _GUARD_INSTALLED
+
+    if _GUARD_INSTALLED:
+        return 0
+
+    from bot.services import billing
+    from bot.services import yookassa_recurring
+    import database.requests as database_requests
+
+    guarded_count = 0
+    guarded_count += _guard_module_entry_points(
+        billing,
+        _discover_billing_entry_points(billing),
+    )
+    guarded_count += _guard_module_entry_points(
+        database_requests,
+        _DATABASE_ENTRY_POINTS,
+    )
+    guarded_count += _guard_module_entry_points(
+        yookassa_recurring,
+        _RECURRING_ENTRY_POINTS,
+    )
 
     _GUARD_INSTALLED = True
     logger.info(
