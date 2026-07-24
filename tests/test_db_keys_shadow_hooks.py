@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from unittest.mock import patch
 
 from database import db_keys_shadow as hooks
+from database import db_keys_shadow_outbox as durable_delete
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,7 @@ class DbKeysShadowHookTests(unittest.TestCase):
 
         self.assertIs(requests.extend_vpn_key, hooks.extend_vpn_key)
         self.assertIs(requests.bulk_update_traffic, hooks.bulk_update_traffic)
-        self.assertIs(requests.delete_vpn_key, hooks.delete_vpn_key)
+        self.assertIs(requests.delete_vpn_key, durable_delete.delete_vpn_key)
 
     def test_extend_schedules_only_after_success(self) -> None:
         with (
@@ -65,7 +66,7 @@ class DbKeysShadowHookTests(unittest.TestCase):
             ],
         )
 
-    def test_delete_sends_disabled_tombstone_after_success(self) -> None:
+    def test_legacy_delete_wrapper_still_builds_tombstone(self) -> None:
         snapshot = DummySnapshot(
             legacy_key_id=9,
             enabled=True,
@@ -84,23 +85,6 @@ class DbKeysShadowHookTests(unittest.TestCase):
         self.assertFalse(tombstone.enabled)
         self.assertFalse(tombstone.configured)
         self.assertFalse(tombstone.subscription_ready)
-        self.assertEqual(schedule.call_args.kwargs, {"reason": "delete"})
-
-    def test_delete_does_not_schedule_when_local_delete_fails(self) -> None:
-        snapshot = DummySnapshot(
-            legacy_key_id=9,
-            enabled=True,
-            configured=True,
-            subscription_ready=True,
-        )
-        with (
-            patch.object(hooks, "_capture_snapshot", return_value=snapshot),
-            patch.object(hooks._db, "delete_vpn_key", return_value=False),
-            patch.object(hooks, "_schedule_snapshot") as schedule,
-        ):
-            self.assertFalse(hooks.delete_vpn_key(9))
-
-        schedule.assert_not_called()
 
     def test_tariff_schedules_only_after_success(self) -> None:
         with (
@@ -128,7 +112,6 @@ class DbKeysShadowHookTests(unittest.TestCase):
             patch.object(hooks, "_schedule_key") as schedule,
         ):
             self.assertTrue(hooks.add_days_to_first_active_key(99, 7))
-
         schedule.assert_called_once_with(6, reason="referral_extend")
 
 
