@@ -225,6 +225,25 @@ class WaveMeshInternalApiClient:
 
         return result
 
+    async def sync_access_shadow(
+        self,
+        *,
+        payload: dict[str, Any],
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        result = await self._request(
+            "POST",
+            "bot/accesses/shadow-sync",
+            json_body=payload,
+            idempotency_key=idempotency_key,
+        )
+        if not isinstance(result, dict) or not result.get("access_id"):
+            raise InternalApiError(
+                "Unexpected access shadow response",
+                code="INTERNAL_API_INVALID_RESPONSE",
+            )
+        return result
+
 
 internal_api_client = WaveMeshInternalApiClient()
 
