@@ -167,6 +167,28 @@ async def main():
         if isinstance(exception, TelegramNetworkError):
             logger.warning(f"⚠️ Нет связи с Telegram API: {exception}")
             return True
+
+        if (
+            isinstance(exception, RuntimeError)
+            and str(exception).startswith(
+                "Legacy commercial operation blocked by WaveMesh runtime mode:"
+            )
+        ):
+            callback = getattr(event.update, "callback_query", None)
+            if callback is not None:
+                try:
+                    await callback.answer(
+                        "Оплата через старый контур временно недоступна. Используйте новый WaveMesh кабинет.",
+                        show_alert=True,
+                    )
+                except Exception as answer_error:
+                    logger.warning(
+                        "Не удалось показать уведомление о блокировке legacy-оплаты: %s",
+                        answer_error,
+                    )
+            logger.warning("Legacy commercial callback blocked safely: %s", exception)
+            return True
+
         logger.error(f"Необработанная ошибка: {exception}", exc_info=True)
         return True
 
