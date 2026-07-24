@@ -35,6 +35,7 @@ from bot.services.internal_api import (
     startup_probe as internal_api_startup_probe,
 )
 from bot.services.runtime_mode import env_flag, saas_client_mode_enabled
+from bot.services.xui_write_guard import install_xui_write_guard
 
 scheduler_module.check_and_send_expiry_notifications = clean_expiry_notifications
 run_daily_tasks = scheduler_module.run_daily_tasks
@@ -68,6 +69,7 @@ async def on_startup(bot: Bot):
     """Действия при запуске бота."""
     logger.info("🚀 Бот запускается...")
 
+    install_xui_write_guard()
     run_migrations()
     apply_wavemesh_branding_defaults()
     ensure_access_shadow_outbox_schema()
