@@ -34,14 +34,33 @@ _BILLING_ENTRY_POINTS = {
     "check_cardlink_payment",
 }
 
-# Database entry points used directly by Telegram payment handlers before billing.
+# Database entry points used directly by Telegram/admin handlers before billing.
+# These are legacy commercial writes and must never mutate local SQLite while the
+# bot is operating as a SaaS client.
 _DATABASE_ENTRY_POINTS = {
+    # Orders and provider context.
     "create_pending_order",
     "complete_order",
     "update_order_tariff",
-    "save_yookassa_payment_id",
-    "save_order_subscription_context",
+    "update_payment_type",
     "update_payment_key_id",
+    "save_yookassa_payment_id",
+    "save_wata_payment_id",
+    "save_platega_payment_id",
+    "save_cardlink_payment_id",
+    "save_order_subscription_context",
+    # Balance and referral money.
+    "add_to_balance",
+    "deduct_from_balance",
+    # Local key creation and commercial extension.
+    "create_initial_vpn_key",
+    "create_vpn_key_admin",
+    "extend_vpn_key",
+    "add_days_to_first_active_key",
+    # Legacy subscription/payment-method state.
+    "unlink_subscription_payment_method_by_key",
+    # Trial activation also creates local commercial access.
+    "mark_trial_used",
 }
 
 # Recurring YooKassa functions are imported directly from their service module.
@@ -123,6 +142,17 @@ def _discover_billing_entry_points(module: ModuleType) -> set[str]:
     return names
 
 
+def _discover_database_entry_points(module: ModuleType) -> set[str]:
+    names = set(_DATABASE_ENTRY_POINTS)
+    for name, value in vars(module).items():
+        if not callable(value):
+            continue
+        lowered = name.lower()
+        if lowered.startswith("save_") and lowered.endswith("payment_id"):
+            names.add(name)
+    return names
+
+
 def install_commercial_write_guard() -> int:
     """Wrap commercial writes before Telegram handlers import their functions."""
     global _GUARD_INSTALLED
@@ -141,7 +171,7 @@ def install_commercial_write_guard() -> int:
     )
     guarded_count += _guard_module_entry_points(
         database_requests,
-        _DATABASE_ENTRY_POINTS,
+        _discover_database_entry_points(database_requests),
     )
     guarded_count += _guard_module_entry_points(
         yookassa_recurring,
