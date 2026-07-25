@@ -3,7 +3,7 @@
 This router is included only in WaveMesh SaaS client mode and is registered
 before legacy payment routers. It performs read-only ownership checks against
 the local key projection, then creates the commercial order exclusively in the
-WaveMesh SaaS Internal API.
+WaveMesh SaaS Internal API for the exact mapped access.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ async def _load_checkout_context(
     callback: CallbackQuery,
     key_id: int,
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]] | None:
-    """Validate local ownership and resolve one unambiguous SaaS access."""
+    """Validate local ownership and resolve one explicitly mapped SaaS access."""
     from database.requests import get_key_details_for_user
 
     key = get_key_details_for_user(key_id, callback.from_user.id)
@@ -120,10 +120,7 @@ async def _load_checkout_context(
         )
         return None
 
-    # The current bot/orders contract does not yet accept access_id. Until it
-    # does, checkout is safe only when this user has exactly one SaaS access and
-    # that access is explicitly mapped to the selected legacy key.
-    if len(valid_accesses) != 1 or len(matches) != 1:
+    if len(matches) != 1:
         logger.warning(
             "SaaS renewal access mapping is ambiguous: telegram_id=%s "
             "key_id=%s accesses=%s matches=%s",
@@ -133,7 +130,20 @@ async def _load_checkout_context(
             len(matches),
         )
         await callback.answer(
-            "Для безопасного продления этот ключ должен быть единственным доступом в новом кабинете WaveMesh. Обратитесь в поддержку.",
+            "Этот ключ ещё не сопоставлен с конкретным доступом в новом кабинете WaveMesh. Обратитесь в поддержку.",
+            show_alert=True,
+        )
+        return None
+
+    access_id = matches[0].get("access_id")
+    if not isinstance(access_id, str) or not access_id:
+        logger.error(
+            "SaaS renewal mapped access has no access_id: telegram_id=%s key_id=%s",
+            callback.from_user.id,
+            key_id,
+        )
+        await callback.answer(
+            "Сопоставление ключа в WaveMesh повреждено. Обратитесь в поддержку.",
             show_alert=True,
         )
         return None
@@ -224,8 +234,8 @@ async def saas_renew_select_tariff(callback: CallbackQuery) -> None:
     text = (
         "💳 <b>Продление через WaveMesh</b>\n\n"
         f"🔑 Ключ: <b>{escape_html(key.get('display_name') or 'VPN-ключ')}</b>\n\n"
-        "Выберите тариф. Заказ будет создан в новом кабинете WaveMesh; "
-        "локальная база бота и старый платёжный контур не используются."
+        "Выберите тариф. Заказ будет привязан именно к этому доступу в новом "
+        "кабинете WaveMesh; локальная база бота и старый платёжный контур не используются."
     )
     await safe_edit_or_send(
         callback.message,
@@ -281,12 +291,14 @@ async def saas_create_checkout(callback: CallbackQuery) -> None:
         )
         return
 
+    access_id = saas_context["access"].get("access_id")
     await callback.answer("Создаём безопасную ссылку на оплату…")
 
     try:
         result = await internal_api_client.create_order(
             user_id=saas_context["user_id"],
             tariff_id=tariff_id,
+            access_id=access_id,
             idempotency_key=(
                 f"telegram-renew-{callback.from_user.id}-{key_id}-"
                 f"{tariff_id}-{callback.id}"
@@ -295,9 +307,10 @@ async def saas_create_checkout(callback: CallbackQuery) -> None:
     except InternalApiError as error:
         logger.warning(
             "SaaS checkout creation failed: telegram_id=%s key_id=%s "
-            "tariff_id=%s code=%s status=%s retryable=%s",
+            "access_id=%s tariff_id=%s code=%s status=%s retryable=%s",
             callback.from_user.id,
             key_id,
+            access_id,
             tariff_id,
             error.code,
             error.status,
@@ -307,6 +320,11 @@ async def saas_create_checkout(callback: CallbackQuery) -> None:
             message = (
                 "Новый платёжный контур уже подключён в боте, но коммерческий "
                 "gate на сервере WaveMesh пока выключен."
+            )
+        elif error.code == "ACCESS_BILLING_TARGET_NOT_READY":
+            message = (
+                "Ключ сопоставлен с новым кабинетом, но его платёжный доступ ещё "
+                "не материализован в SaaS. Оплата не создана."
             )
         else:
             message = str(error) or "Не удалось создать платёж. Попробуйте позже."
@@ -347,7 +365,7 @@ async def saas_create_checkout(callback: CallbackQuery) -> None:
         "tariff_id=%s order_id=%s",
         callback.from_user.id,
         key_id,
-        saas_context["access"].get("access_id"),
+        access_id,
         tariff_id,
         order_id,
     )
@@ -358,8 +376,8 @@ async def saas_create_checkout(callback: CallbackQuery) -> None:
             "✅ <b>Ссылка на оплату готова</b>\n\n"
             f"🔑 Ключ: <b>{escape_html(key.get('display_name') or 'VPN-ключ')}</b>\n"
             f"🎫 Тариф: <b>{escape_html(str(tariff.get('name') or 'WaveMesh'))}</b>\n\n"
-            "Нажмите кнопку ниже. После подтверждения платежа доступ будет "
-            "обработан новым контуром WaveMesh."
+            "Нажмите кнопку ниже. После подтверждения платежа будет продлён "
+            "именно выбранный доступ."
         ),
         reply_markup=builder.as_markup(),
     )
