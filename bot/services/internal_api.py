@@ -230,13 +230,15 @@ class WaveMeshInternalApiClient:
         *,
         user_id: str,
         tariff_id: str,
+        access_id: str,
         return_url: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Создаёт SaaS order и возвращает безопасную checkout-ссылку."""
+        """Создаёт SaaS order для конкретного доступа и возвращает checkout."""
         payload: dict[str, Any] = {
             "user_id": user_id,
             "tariff_id": tariff_id,
+            "access_id": access_id,
             "provider": "YOOKASSA",
         }
         if return_url:
