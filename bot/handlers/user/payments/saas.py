@@ -68,7 +68,7 @@ async def _load_checkout_context(
     callback: CallbackQuery,
     key_id: int,
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]] | None:
-    """Validate local ownership and resolve the matching SaaS user/access."""
+    """Validate local ownership and resolve one unambiguous SaaS access."""
     from database.requests import get_key_details_for_user
 
     key = get_key_details_for_user(key_id, callback.from_user.id)
@@ -101,7 +101,12 @@ async def _load_checkout_context(
 
     user = dashboard.get("user")
     user_id = user.get("user_id") if isinstance(user, dict) else None
-    matches = _matching_accesses(dashboard.get("accesses"), key_id)
+    accesses = dashboard.get("accesses")
+    valid_accesses = [
+        access for access in accesses
+        if isinstance(access, dict)
+    ] if isinstance(accesses, list) else []
+    matches = _matching_accesses(valid_accesses, key_id)
 
     if not isinstance(user_id, str) or not user_id:
         logger.error(
@@ -115,16 +120,20 @@ async def _load_checkout_context(
         )
         return None
 
-    if len(matches) != 1:
+    # The current bot/orders contract does not yet accept access_id. Until it
+    # does, checkout is safe only when this user has exactly one SaaS access and
+    # that access is explicitly mapped to the selected legacy key.
+    if len(valid_accesses) != 1 or len(matches) != 1:
         logger.warning(
             "SaaS renewal access mapping is ambiguous: telegram_id=%s "
-            "key_id=%s matches=%s",
+            "key_id=%s accesses=%s matches=%s",
             callback.from_user.id,
             key_id,
+            len(valid_accesses),
             len(matches),
         )
         await callback.answer(
-            "Этот ключ ещё не сопоставлен с новым кабинетом WaveMesh. Обратитесь в поддержку.",
+            "Для безопасного продления этот ключ должен быть единственным доступом в новом кабинете WaveMesh. Обратитесь в поддержку.",
             show_alert=True,
         )
         return None
@@ -181,6 +190,7 @@ async def saas_renew_select_tariff(callback: CallbackQuery) -> None:
         return
 
     builder = InlineKeyboardBuilder()
+    rendered_tariffs = 0
     for tariff in available:
         callback_data = f"{_CALLBACK_PREFIX}:{key_id}:{tariff['tariff_id']}"
         if len(callback_data.encode("utf-8")) > 64:
@@ -195,6 +205,14 @@ async def saas_renew_select_tariff(callback: CallbackQuery) -> None:
                 callback_data=callback_data,
             )
         )
+        rendered_tariffs += 1
+
+    if rendered_tariffs == 0:
+        await callback.answer(
+            "Тарифы временно невозможно показать в Telegram.",
+            show_alert=True,
+        )
+        return
 
     builder.row(
         InlineKeyboardButton(
