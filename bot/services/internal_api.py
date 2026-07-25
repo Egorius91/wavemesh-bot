@@ -225,6 +225,53 @@ class WaveMeshInternalApiClient:
 
         return result
 
+    async def create_order(
+        self,
+        *,
+        user_id: str,
+        tariff_id: str,
+        return_url: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Создаёт SaaS order и возвращает безопасную checkout-ссылку."""
+        payload: dict[str, Any] = {
+            "user_id": user_id,
+            "tariff_id": tariff_id,
+            "provider": "YOOKASSA",
+        }
+        if return_url:
+            payload["return_url"] = return_url
+
+        result = await self._request(
+            "POST",
+            "bot/orders",
+            json_body=payload,
+            idempotency_key=(idempotency_key or f"telegram-order-{uuid4()}"),
+        )
+
+        if not isinstance(result, dict):
+            raise InternalApiError(
+                "Unexpected checkout response",
+                code="INTERNAL_API_INVALID_RESPONSE",
+            )
+
+        order_id = result.get("order_id")
+        checkout_url = result.get("checkout_url")
+        status = result.get("status")
+        if (
+            not isinstance(order_id, str)
+            or not order_id
+            or not isinstance(checkout_url, str)
+            or not checkout_url.startswith("https://")
+            or not isinstance(status, str)
+        ):
+            raise InternalApiError(
+                "Unexpected checkout response",
+                code="INTERNAL_API_INVALID_RESPONSE",
+            )
+
+        return result
+
     async def sync_access_shadow(
         self,
         *,
