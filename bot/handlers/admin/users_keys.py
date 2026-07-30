@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -374,10 +375,76 @@ async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
     traffic_limit_bytes = (traffic_gb or 0) * 1024 ** 3
     subscription_mode = is_subscription_mode() and inbound_id is None
     try:
-        client = get_client_from_server_data(server)
         admin_tariff = get_admin_tariff()
         tariff_id = admin_tariff['id']
 
+        from bot.services.runtime_mode import saas_client_mode_enabled
+        if saas_client_mode_enabled():
+            from bot.services.access_shadow import (
+                get_access_shadow_snapshot,
+                sync_access_shadow_snapshot,
+            )
+            from bot.services.internal_api import internal_api_client
+            from database.db_keys import create_initial_vpn_key, delete_vpn_key
+
+            key_id = create_initial_vpn_key(
+                user_id=user_id,
+                tariff_id=tariff_id,
+                days=days,
+                traffic_limit=traffic_limit_bytes,
+            )
+            access_submitted = False
+            try:
+                snapshot = get_access_shadow_snapshot(key_id)
+                if snapshot is None:
+                    raise RuntimeError('Не удалось подготовить локальную запись ключа')
+                await sync_access_shadow_snapshot(
+                    snapshot,
+                    reason='admin_access_provisioning',
+                )
+                provisioned = await internal_api_client.create_access(
+                    telegram_id=user_telegram_id,
+                    legacy_key_id=key_id,
+                    duration_days=days,
+                    traffic_limit_bytes=traffic_limit_bytes,
+                    device_limit=admin_tariff.get('max_ips', 1),
+                    idempotency_key=f'admin-access-provision-{key_id}',
+                )
+                access_submitted = True
+                access_id = provisioned['access_id']
+                material = None
+                for _ in range(60):
+                    material = await internal_api_client.get_access_material(access_id)
+                    if material['ready']:
+                        break
+                    if material['status'] in {'failed', 'revoked'}:
+                        raise RuntimeError('Entry access provisioning failed')
+                    await asyncio.sleep(2)
+                if not material or not material['ready']:
+                    raise RuntimeError('Entry access provisioning confirmation timed out')
+                from database.db_keys import update_vpn_key_config
+                if not update_vpn_key_config(
+                    key_id=key_id,
+                    server_id=server_id,
+                    panel_inbound_id=material['primary_inbound_id'],
+                    panel_email=material['panel_email'],
+                    client_uuid=material['client_uuid'],
+                    sub_id=material['sub_id'],
+                ):
+                    raise RuntimeError('Could not finalize the local VPN key')
+            except Exception:
+                if not access_submitted:
+                    delete_vpn_key(key_id)
+                raise
+
+            await callback.answer(
+                '✅ Создание ключа запущено. Он появится после подтверждения Entry.',
+                show_alert=True,
+            )
+            await _show_user_view_edit(callback, state, user_telegram_id)
+            return
+
+        client = get_client_from_server_data(server)
         if subscription_mode:
             inbounds = await get_public_subscription_inbounds(client)
             if not inbounds:

@@ -274,6 +274,84 @@ class WaveMeshInternalApiClient:
 
         return result
 
+    async def create_access(
+        self,
+        *,
+        telegram_id: int,
+        legacy_key_id: int,
+        duration_days: int,
+        traffic_limit_bytes: int,
+        device_limit: int,
+        requested_node_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "telegram_id": str(telegram_id),
+            "legacy_key_id": str(legacy_key_id),
+            "duration_days": duration_days,
+            "traffic_limit_bytes": str(max(0, traffic_limit_bytes)),
+            "device_limit": device_limit,
+        }
+        if requested_node_id:
+            payload["requested_node_id"] = requested_node_id
+
+        result = await self._request(
+            "POST",
+            "bot/accesses",
+            json_body=payload,
+            idempotency_key=(
+                idempotency_key
+                or f"telegram-admin-access-{legacy_key_id}-{uuid4()}"
+            ),
+        )
+        if (
+            not isinstance(result, dict)
+            or not isinstance(result.get("access_id"), str)
+            or not isinstance(result.get("command_id"), str)
+            or result.get("status") != "materializing"
+        ):
+            raise InternalApiError(
+                "Unexpected access provisioning response",
+                code="INTERNAL_API_INVALID_RESPONSE",
+            )
+        return result
+
+    async def get_access_material(self, access_id: str) -> dict[str, Any]:
+        result = await self._request(
+            "GET",
+            f"bot/accesses/{access_id}/material",
+        )
+        if (
+            not isinstance(result, dict)
+            or result.get("access_id") != access_id
+            or not isinstance(result.get("ready"), bool)
+            or not isinstance(result.get("status"), str)
+        ):
+            raise InternalApiError(
+                "Unexpected access material response",
+                code="INTERNAL_API_INVALID_RESPONSE",
+            )
+        if result["ready"]:
+            required_strings = (
+                "panel_email",
+                "client_uuid",
+                "sub_id",
+                "protocol",
+                "subscription_url",
+            )
+            if (
+                any(not isinstance(result.get(key), str) or not result[key] for key in required_strings)
+                or not isinstance(result.get("primary_inbound_id"), int)
+                or result["primary_inbound_id"] < 1
+                or result["protocol"] != "vless"
+                or not result["subscription_url"].startswith("https://")
+            ):
+                raise InternalApiError(
+                    "Unexpected ready access material response",
+                    code="INTERNAL_API_INVALID_RESPONSE",
+                )
+        return result
+
     async def sync_access_shadow(
         self,
         *,
