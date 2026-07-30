@@ -1,4 +1,7 @@
 from aiogram import Router
+
+from bot.services.runtime_mode import saas_client_mode_enabled
+
 from .base import router as base_router
 from .balance import router as balance_router
 from .yookassa import router as yookassa_router
@@ -11,6 +14,14 @@ from .keys_config import router as keys_config_router
 from .demo import router as demo_router
 
 router = Router()
+
+# In SaaS client mode this router must be first: it owns key_renew callbacks
+# and creates orders only through WaveMesh Internal API.
+if saas_client_mode_enabled():
+    from .saas import router as saas_router
+
+    router.include_router(saas_router)
+
 router.include_router(base_router)
 router.include_router(balance_router)
 router.include_router(yookassa_router)

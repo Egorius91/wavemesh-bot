@@ -170,6 +170,14 @@ def _get_renew_key_id(ctx: dict) -> Optional[str]:
     return str(key_id)
 
 
+def _resolve_renew_back(ctx: dict) -> Optional[dict]:
+    """Возвращает пользователя из выбора оплаты в карточку текущего ключа."""
+    key_id = _get_renew_key_id(ctx)
+    if not key_id:
+        return {"callback_data": "my_keys"}
+    return {"callback_data": f"key:{key_id}"}
+
+
 def _resolve_renew_pay_crypto(ctx: dict) -> Optional[dict]:
     """Кнопка продления через крипто-оплату (USDT)."""
     from database.requests import is_crypto_configured
@@ -288,4 +296,5 @@ SYSTEM_BUTTONS: Dict[str, Callable[[Dict[str, Any]], Optional[dict]]] = {
     "btn_renew_pay_cardlink": _resolve_renew_pay_cardlink,
     "btn_renew_pay_demo": _resolve_renew_pay_demo,
     "btn_renew_pay_balance": _resolve_renew_pay_balance,
+    "btn_renew_back": _resolve_renew_back,
 }
