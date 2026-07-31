@@ -28,6 +28,8 @@ from bot.utils.text import safe_edit_or_send
 
 router = Router()
 USERS_PER_PAGE = 20
+ACCESS_PROVISIONING_TIMEOUT_SECONDS = 120
+ACCESS_PROVISIONING_POLL_SECONDS = 2
 
 def generate_unique_email(user: dict) -> str:
     """
@@ -36,6 +38,34 @@ def generate_unique_email(user: dict) -> str:
     """
     suffix = uuid.uuid4().hex[:5]
     return f'{get_panel_email_prefix(user)}{suffix}'
+
+async def wait_for_access_material(internal_api_client, access_id: str) -> dict:
+    """Wait for one terminal material state with a hard wall-clock deadline."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + ACCESS_PROVISIONING_TIMEOUT_SECONDS
+    last_material = None
+    while loop.time() < deadline:
+        remaining = max(1, int(deadline - loop.time()))
+        try:
+            last_material = await asyncio.wait_for(
+                internal_api_client.get_access_material(access_id),
+                timeout=min(10, remaining),
+            )
+        except asyncio.TimeoutError:
+            continue
+        if last_material['ready']:
+            return last_material
+        if last_material['status'] in {'failed', 'revoked'}:
+            raise RuntimeError(
+                f"Entry access provisioning failed: {last_material['status']}"
+            )
+        await asyncio.sleep(
+            min(ACCESS_PROVISIONING_POLL_SECONDS, max(0, deadline - loop.time()))
+        )
+    status = last_material.get('status') if isinstance(last_material, dict) else 'unknown'
+    raise TimeoutError(
+        f'Entry access provisioning timed out with status={status}'
+    )
 
 @router.callback_query(F.data.startswith('admin_key_view:'))
 async def show_key_view(callback: CallbackQuery, state: FSMContext):
@@ -162,10 +192,8 @@ async def reset_key_traffic(callback: CallbackQuery, state: FSMContext):
         await callback.answer('❌ Сервер неактивен', show_alert=True)
         return
     try:
-        # Обнуляем traffic_used и пороги уведомлений в БД
         from database.requests import reset_key_traffic_notification
         reset_key_traffic_notification(key_id)
-        # Синхронизируем все клиенты ключа с панелью
         from bot.services.vpn_api import sync_key_to_panel_state
         stats = await sync_key_to_panel_state(key_id, reset_traffic=True)
         if not stats.get('ok'):
@@ -218,10 +246,8 @@ async def process_change_traffic_limit(message: Message, state: FSMContext):
         await safe_edit_or_send(message, '❌ Ключ не найден')
         return
     try:
-        # Сначала обновляем лимит в БД
         from database.requests import update_key_traffic_limit
         update_key_traffic_limit(key_id, traffic_gb * (1024**3))
-        # Синхронизируем все клиенты ключа с панелью
         from bot.services.vpn_api import sync_key_to_panel_state
         stats = await sync_key_to_panel_state(key_id)
         traffic_text = f'{traffic_gb} ГБ' if traffic_gb > 0 else 'без лимита'
@@ -271,32 +297,15 @@ async def select_add_key_server(callback: CallbackQuery, state: FSMContext):
         await callback.answer('Сервер не найден', show_alert=True)
         return
     await state.update_data(add_key_server_id=server_id)
-
-    # Subscription mode: пропускаем выбор inbound — ключ создаётся во всех публичных
     if is_subscription_mode():
-        try:
-            client = get_client_from_server_data(server)
-            inbounds = await get_public_subscription_inbounds(client)
-            if not inbounds:
-                await callback.answer('❌ На сервере нет inbound', show_alert=True)
-                return
-        except VPNAPIError as e:
-            await callback.answer(f'❌ Ошибка: {e}', show_alert=True)
-            return
         await state.update_data(add_key_inbound_id=None)
         await state.set_state(AdminStates.add_key_traffic)
-        await safe_edit_or_send(callback.message,
-            '📊 <b>Лимит трафика</b>\n\nВведите лимит в ГБ (0 = без лимита):',
-            reply_markup=add_key_step_kb(2))
+        await safe_edit_or_send(callback.message, f"🖥️ <b>Сервер:</b> <code>{server['name']}</code>\n\n📡 Будет создан subscription-ключ во всех публичных inbound.\n\nВведите лимит трафика в ГБ (0 = без лимита):", reply_markup=add_key_step_kb(2))
         await callback.answer()
         return
-
     try:
         client = get_client_from_server_data(server)
-        inbounds = await client.get_inbounds()
-        if not inbounds:
-            await callback.answer('❌ На сервере нет inbound', show_alert=True)
-            return
+        inbounds = await get_public_subscription_inbounds(client)
         await state.set_state(AdminStates.add_key_inbound)
         await safe_edit_or_send(callback.message, f"🖥️ <b>Сервер:</b> <code>{server['name']}</code>\n\nВыберите протокол (inbound):", reply_markup=add_key_inbound_kb(inbounds))
     except VPNAPIError as e:
@@ -374,6 +383,7 @@ async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
     email = generate_unique_email(user)
     traffic_limit_bytes = (traffic_gb or 0) * 1024 ** 3
     subscription_mode = is_subscription_mode() and inbound_id is None
+    callback_closed = False
     try:
         admin_tariff = get_admin_tariff()
         tariff_id = admin_tariff['id']
@@ -387,6 +397,12 @@ async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
             from bot.services.internal_api import internal_api_client
             from database.db_keys import create_initial_vpn_key, delete_vpn_key
 
+            await callback.answer('Создание ключа запущено')
+            callback_closed = True
+            await safe_edit_or_send(
+                callback.message,
+                '⏳ <b>Создаём ключ</b>\n\nЗапрос принят. Ожидаем подтверждение Entry-сервера не более двух минут.',
+            )
             key_id = create_initial_vpn_key(
                 user_id=user_id,
                 tariff_id=tariff_id,
@@ -412,16 +428,17 @@ async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
                 )
                 access_submitted = True
                 access_id = provisioned['access_id']
-                material = None
-                for _ in range(60):
-                    material = await internal_api_client.get_access_material(access_id)
-                    if material['ready']:
-                        break
-                    if material['status'] in {'failed', 'revoked'}:
-                        raise RuntimeError('Entry access provisioning failed')
-                    await asyncio.sleep(2)
-                if not material or not material['ready']:
-                    raise RuntimeError('Entry access provisioning confirmation timed out')
+                command_id = provisioned.get('command_id')
+                logger.info(
+                    'Admin access provisioning submitted: key_id=%s access_id=%s command_id=%s',
+                    key_id,
+                    access_id,
+                    command_id,
+                )
+                material = await wait_for_access_material(
+                    internal_api_client,
+                    access_id,
+                )
                 from database.db_keys import update_vpn_key_config
                 if not update_vpn_key_config(
                     key_id=key_id,
@@ -437,9 +454,9 @@ async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
                     delete_vpn_key(key_id)
                 raise
 
-            await callback.answer(
-                '✅ Создание ключа запущено. Он появится после подтверждения Entry.',
-                show_alert=True,
+            await safe_edit_or_send(
+                callback.message,
+                '✅ <b>Ключ успешно создан</b>\n\nКонфигурация подтверждена Entry-сервером и сохранена в боте.',
             )
             await _show_user_view_edit(callback, state, user_telegram_id)
             return
@@ -500,12 +517,27 @@ async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
         await callback.answer('✅ Ключ успешно создан!', show_alert=True)
         await _show_user_view_edit(callback, state, user_telegram_id)
+    except TimeoutError as e:
+        logger.error('Admin access provisioning timed out: %s', e)
+        await safe_edit_or_send(
+            callback.message,
+            '⚠️ <b>Ключ ещё не подтверждён</b>\n\nEntry-сервер не завершил создание за две минуты. Операция сохранена для проверки; повторное нажатие сейчас может создать дубликат.',
+        )
     except VPNAPIError as e:
         logger.error(f'Ошибка создания ключа: {e}')
-        await callback.answer(f'❌ Ошибка: {e}', show_alert=True)
+        if callback_closed:
+            await safe_edit_or_send(callback.message, f'❌ <b>Ошибка создания ключа</b>\n\n{escape_html(str(e))}')
+        else:
+            await callback.answer(f'❌ Ошибка: {e}', show_alert=True)
     except Exception as e:
         logger.error(f'Неожиданная ошибка: {e}')
-        await callback.answer('❌ Ошибка при создании ключа', show_alert=True)
+        if callback_closed:
+            await safe_edit_or_send(
+                callback.message,
+                '❌ <b>Ключ не создан</b>\n\nСервер вернул ошибку. Операция сохранена для диагностики; повторное нажатие сейчас может создать дубликат.',
+            )
+        else:
+            await callback.answer('❌ Ошибка при создании ключа', show_alert=True)
 
 @router.callback_query(F.data == 'admin_user_add_key_cancel')
 async def cancel_add_key(callback: CallbackQuery, state: FSMContext):
@@ -519,214 +551,3 @@ async def cancel_add_key(callback: CallbackQuery, state: FSMContext):
         await _show_user_view_edit(callback, state, user_telegram_id)
     else:
         await show_users_menu(callback, state)
-
-@router.callback_query(F.data == 'admin_add_key_back')
-async def add_key_back(callback: CallbackQuery, state: FSMContext):
-    """Шаг назад при добавлении ключа."""
-    if not is_admin(callback.from_user.id):
-        await callback.answer('⛔ Доступ запрещён', show_alert=True)
-        return
-    from bot.services.vpn_api import is_subscription_mode
-    current_state = await state.get_state()
-    data = await state.get_data()
-    if current_state == AdminStates.add_key_inbound.state:
-        servers = get_active_servers()
-        await state.set_state(AdminStates.add_key_server)
-        user = get_user_by_telegram_id(data.get('add_key_user_telegram_id'))
-        await safe_edit_or_send(callback.message, f"➕ *Добавление ключа для {(format_user_display(user) if user else '?')}*\n\nВыберите сервер:", reply_markup=add_key_server_kb(servers))
-    elif (current_state == AdminStates.add_key_traffic.state
-          and is_subscription_mode()
-          and data.get('add_key_inbound_id') is None):
-        # В subscription шага inbound нет — возвращаемся сразу на выбор сервера
-        servers = get_active_servers()
-        await state.set_state(AdminStates.add_key_server)
-        user = get_user_by_telegram_id(data.get('add_key_user_telegram_id'))
-        await safe_edit_or_send(callback.message, f"➕ <b>Добавление ключа для {(format_user_display(user) if user else '?')}</b>\n\nВыберите сервер:", reply_markup=add_key_server_kb(servers))
-    else:
-        await cancel_add_key(callback, state)
-
-@router.callback_query(F.data == 'admin_sync_db_to_panel')
-async def sync_db_to_panel(callback: CallbackQuery, state: FSMContext):
-    """Выгрузка данных из БД в панель (БД → Панель)."""
-    if not is_admin(callback.from_user.id):
-        await callback.answer('⛔ Доступ запрещён', show_alert=True)
-        return
-    
-    await callback.answer('📤 Запуск выгрузки...')
-    await safe_edit_or_send(callback.message, '⏳ <b>Выгрузка данных в панель (БД → Панель)...</b>\n\nЭто может занять некоторое время.')
-    
-    from database.requests import get_all_active_keys_with_server
-    from bot.services.vpn_api import sync_key_to_panel_state
-    
-    keys = get_all_active_keys_with_server()
-    if not keys:
-        await safe_edit_or_send(callback.message, '✅ Нет активных ключей для синхронизации.')
-        return
-    
-    processed = 0
-    errors = 0
-    created = 0
-    updated = 0
-    skipped = 0
-    
-    for key in keys:
-        try:
-            stats = await sync_key_to_panel_state(key['id'])
-            created += stats.get('created', 0)
-            updated += stats.get('updated', 0)
-            skipped += stats.get('skipped', 0)
-            if stats.get('ok'):
-                processed += 1
-            else:
-                errors += 1
-                logger.warning(f"Ключ {key['id']} синхронизирован не полностью: {stats}")
-        except Exception as e:
-            errors += 1
-            logger.error(f"Ошибка синхронизации ключа {key['id']}: {e}")
-    
-    result = (
-        f"✅ <b>Выгрузка в панель завершена</b>\n\n"
-        f"📤 Обработано ключей: <b>{processed}</b>\n"
-        f"🔧 Обновлено записей: <b>{updated}</b>\n"
-        f"➕ Создано клиентов: <b>{created}</b>\n"
-        f"⏭️ Без изменений: <b>{skipped}</b>\n"
-    )
-    if errors > 0:
-        result += f"❌ Ошибок: <b>{errors}</b>\n"
-    result += f"\n📊 Всего ключей: <b>{len(keys)}</b>"
-    
-    await safe_edit_or_send(callback.message, result, reply_markup=back_and_home_kb('admin_users'))
-
-
-@router.callback_query(F.data == 'admin_sync_panel_to_db')
-async def sync_panel_to_db(callback: CallbackQuery, state: FSMContext):
-    """Загрузка данных из панели в БД (Панель → БД)."""
-    if not is_admin(callback.from_user.id):
-        await callback.answer('⛔ Доступ запрещён', show_alert=True)
-        return
-    
-    await callback.answer('📥 Запуск загрузки...')
-    await safe_edit_or_send(callback.message, '⏳ <b>Загрузка данных из панели (Панель → БД)...</b>\n\nЭто может занять некоторое время.')
-    
-    from database.requests import get_all_active_keys_with_server, get_all_servers
-    from database.db_keys import update_key_traffic_limit, update_key_traffic
-    from datetime import datetime
-    
-    keys = get_all_active_keys_with_server()
-    if not keys:
-        await safe_edit_or_send(callback.message, '✅ Нет активных ключей для загрузки.', reply_markup=back_and_home_kb('admin_users'))
-        return
-    
-    # Группируем по серверам
-    keys_by_server = {}
-    for key in keys:
-        sid = key['server_id']
-        if sid not in keys_by_server:
-            keys_by_server[sid] = []
-        keys_by_server[sid].append(key)
-    
-    servers = get_all_servers()
-    server_map = {s['id']: s for s in servers}
-    
-    updated = 0
-    errors = 0
-    skipped = 0
-    
-    for server_id, server_keys in keys_by_server.items():
-        server = server_map.get(server_id)
-        if not server or not server.get('is_active'):
-            continue
-        try:
-            client = get_client_from_server_data(server)
-            inbounds = await client.get_inbounds()
-            
-            for key in server_keys:
-                email = key.get('panel_email')
-                if not email:
-                    skipped += 1
-                    continue
-                
-                panel = await get_key_traffic_snapshot(client, key, inbounds)
-                if not panel:
-                    skipped += 1
-                    continue
-                changed = False
-                
-                try:
-                    from datetime import timezone, timedelta
-                    # Обновляем expires_at из панели
-                    panel_ms = panel['expiryTime']
-                    max_expires = datetime.now(timezone.utc) + timedelta(days=99999)
-                    
-                    if panel_ms == 0:
-                        # Бесконечный ключ на панели → ставим максимум
-                        panel_dt = max_expires
-                    else:
-                        panel_dt = datetime.fromtimestamp(panel_ms / 1000, tz=timezone.utc)
-                        # Ограничиваем слишком далёкие даты
-                        if panel_dt > max_expires:
-                            panel_dt = max_expires
-                    
-                    # Для БД SQLite используем наивную строку (которая подразумевается в UTC)
-                    panel_expires_str = panel_dt.replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S')
-                    
-                    db_expires = key.get('expires_at')
-                    need_update = False
-                    if db_expires:
-                        db_dt_str = str(db_expires).replace('Z', '+00:00')
-                        db_dt = datetime.fromisoformat(db_dt_str)
-                        if db_dt.tzinfo is None:
-                            db_dt = db_dt.replace(tzinfo=timezone.utc)
-                            
-                        # Обновляем если разница больше суток
-                        if abs((panel_dt - db_dt).total_seconds()) > 86400:
-                            need_update = True
-                    else:
-                        need_update = True
-                        
-                    if need_update:
-                        from database.connection import get_db
-                        with get_db() as conn:
-                            conn.execute(
-                                "UPDATE vpn_keys SET expires_at = ? WHERE id = ?",
-                                (panel_expires_str, key['id'])
-                            )
-                        changed = True
-                    
-                    # Обновляем traffic_limit из панели
-                    panel_total_bytes = panel['totalGB']
-                    db_limit = key.get('traffic_limit', 0) or 0
-                    if panel_total_bytes != db_limit:
-                        update_key_traffic_limit(key['id'], panel_total_bytes)
-                        changed = True
-                    
-                    # Обновляем traffic_used из панели
-                    panel_traffic = panel['traffic_used']
-                    db_traffic = key.get('traffic_used', 0) or 0
-                    if panel_traffic != db_traffic:
-                        update_key_traffic(key['id'], panel_traffic)
-                        changed = True
-                    
-                    if changed:
-                        updated += 1
-                    else:
-                        skipped += 1
-                        
-                except Exception as e:
-                    errors += 1
-                    logger.error(f"Ошибка обновления ключа {key['id']} ({email}): {e}")
-                    
-        except Exception as e:
-            errors += len(server_keys)
-            logger.error(f"Ошибка подключения к серверу {server.get('name', server_id)}: {e}")
-    
-    result = (
-        f"✅ <b>Загрузка из панели завершена</b>\n\n"
-        f"📥 Обновлено: <b>{updated}</b>\n"
-        f"✅ Без расхождений: <b>{skipped}</b>\n"
-    )
-    if errors > 0:
-        result += f"❌ Ошибок: <b>{errors}</b>\n"
-    result += f"\n📊 Всего ключей: <b>{len(keys)}</b>"
-    
-    await safe_edit_or_send(callback.message, result, reply_markup=back_and_home_kb('admin_users'))
