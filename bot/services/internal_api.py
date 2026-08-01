@@ -303,6 +303,31 @@ class WaveMeshInternalApiClient:
             )
         return result
 
+    async def replace_access(
+        self,
+        *,
+        access_id: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        result = await self._request(
+            "POST",
+            f"bot/accesses/{access_id}/replace",
+            json_body={},
+            idempotency_key=idempotency_key,
+        )
+        if (
+            not isinstance(result, dict)
+            or not isinstance(result.get("command_id"), str)
+            or result.get("status") not in {"pending", "running"}
+            or not isinstance(result.get("desired_version"), int)
+            or result["desired_version"] < 2
+        ):
+            raise InternalApiError(
+                "Unexpected access replacement response",
+                code="INTERNAL_API_INVALID_RESPONSE",
+            )
+        return result
+
     async def create_access(
         self,
         *,
@@ -370,6 +395,8 @@ class WaveMeshInternalApiClient:
             )
             if (
                 any(not isinstance(result.get(key), str) or not result[key] for key in required_strings)
+                or not isinstance(result.get("desired_version"), int)
+                or result["desired_version"] < 1
                 or not isinstance(result.get("primary_inbound_id"), int)
                 or result["primary_inbound_id"] < 1
                 or result["protocol"] != "vless"

@@ -1,6 +1,7 @@
 from bot.handlers.user.payments.saas import (
     _matching_accesses,
     _matching_local_tariffs,
+    _key_matches_material,
     _parse_checkout_callback,
     _parse_single_value_callback,
     _tariff_button_text,
@@ -62,3 +63,20 @@ def test_local_tariff_mapping_requires_exact_commercial_shape():
         {"id": 2, "duration_days": 2, "price_rub": 100, "max_ips": 2, "traffic_limit_gb": 2},
     ]
     assert _matching_local_tariffs(local, saas) == [local[0]]
+
+
+def test_key_material_match_is_exact():
+    key = {
+        "panel_email": "wm_access_1_1",
+        "client_uuid": "f5ee70ce-8a27-4f15-b81e-edc8a8bd11c4",
+        "sub_id": "abcdefghijklmnop",
+        "panel_inbound_id": 9,
+    }
+    material = {
+        "panel_email": "wm_access_1_1",
+        "client_uuid": "f5ee70ce-8a27-4f15-b81e-edc8a8bd11c4",
+        "sub_id": "abcdefghijklmnop",
+        "primary_inbound_id": 9,
+    }
+    assert _key_matches_material(key, material)
+    assert not _key_matches_material(key, {**material, "sub_id": "replacement"})

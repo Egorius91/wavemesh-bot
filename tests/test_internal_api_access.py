@@ -64,6 +64,7 @@ class InternalApiAccessTests(unittest.IsolatedAsyncioTestCase):
                     "access_id": "access-12345678",
                     "status": "ready",
                     "ready": True,
+                    "desired_version": 2,
                     "panel_email": "wm_access_123",
                     "client_uuid": "f5ee70ce-8a27-4f15-b81e-edc8a8bd11c4",
                     "sub_id": "abcdefghijklmnop",
@@ -93,6 +94,29 @@ class InternalApiAccessTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(InternalApiError):
             await client.get_access_material("access-12345678")
+
+    async def test_replace_access_requires_versioned_response(self):
+        client = WaveMeshInternalApiClient()
+        client._request = AsyncMock(
+            return_value={
+                "command_id": "command-12345678",
+                "status": "pending",
+                "desired_version": 2,
+            }
+        )
+
+        result = await client.replace_access(
+            access_id="access-12345678",
+            idempotency_key="telegram-replace-10-2",
+        )
+
+        self.assertEqual(result["desired_version"], 2)
+        client._request.assert_awaited_once_with(
+            "POST",
+            "bot/accesses/access-12345678/replace",
+            json_body={},
+            idempotency_key="telegram-replace-10-2",
+        )
 
 
 if __name__ == "__main__":
