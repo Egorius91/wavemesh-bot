@@ -8,6 +8,7 @@ WaveMesh SaaS Internal API for the exact mapped access.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any
@@ -91,6 +92,32 @@ def _matching_local_tariffs(
         and int(tariff.get("traffic_limit_gb") or 0)
         == int(saas_tariff.get("traffic_limit_gb") or 0)
     ]
+
+
+def _key_matches_material(key: dict[str, Any], material: dict[str, Any]) -> bool:
+    return (
+        key.get("panel_email") == material.get("panel_email")
+        and key.get("client_uuid") == material.get("client_uuid")
+        and key.get("sub_id") == material.get("sub_id")
+        and int(key.get("panel_inbound_id") or 0)
+        == int(material.get("primary_inbound_id") or 0)
+    )
+
+
+def _apply_replacement_material(key: dict[str, Any], material: dict[str, Any]) -> None:
+    from database.requests import update_vpn_key_config
+
+    server_id = key.get("server_id")
+    if not server_id:
+        raise InternalApiError("Local key has no server mapping")
+    update_vpn_key_config(
+        key_id=int(key["id"]),
+        server_id=int(server_id),
+        panel_inbound_id=int(material["primary_inbound_id"]),
+        panel_email=str(material["panel_email"]),
+        client_uuid=str(material["client_uuid"]),
+        sub_id=str(material["sub_id"]),
+    )
 
 
 @router.callback_query(F.data == "buy_key")
@@ -383,6 +410,106 @@ async def _load_checkout_context(
         return None
 
     return key, {"user_id": user_id, "access": matches[0]}, dashboard
+
+
+@router.callback_query(F.data.startswith("key_replace:"))
+async def saas_replace_access(callback: CallbackQuery) -> None:
+    """Replace one mapped access through the versioned Node Agent workflow."""
+    try:
+        key_id = int(callback.data.split(":", 1)[1])
+    except (TypeError, ValueError):
+        await callback.answer("Некорректный ключ.", show_alert=True)
+        return
+
+    context = await _load_checkout_context(callback, key_id)
+    if context is None:
+        return
+    key, saas_context, _ = context
+    if not key.get("is_active"):
+        await callback.answer(
+            "Срок действия ключа истёк. Сначала продлите его.",
+            show_alert=True,
+        )
+        return
+
+    access = saas_context["access"]
+    access_id = access.get("access_id")
+    if not isinstance(access_id, str) or not access_id:
+        await callback.answer("Доступ WaveMesh не найден.", show_alert=True)
+        return
+
+    await callback.answer()
+    await safe_edit_or_send(
+        callback.message,
+        "⏳ <b>Заменяем ключ</b>\n\nРабочий ключ останется активным до подтверждения нового.",
+    )
+
+    try:
+        material = await internal_api_client.get_access_material(access_id)
+        if material.get("ready") is True and not _key_matches_material(key, material):
+            _apply_replacement_material(key, material)
+        else:
+            current_version = access.get("desired_version")
+            if not isinstance(current_version, int) or current_version < 1:
+                raise InternalApiError("SaaS access version is invalid")
+            if access.get("status") == "materializing":
+                target_version = current_version
+            else:
+                target_version = current_version + 1
+                result = await internal_api_client.replace_access(
+                    access_id=access_id,
+                    idempotency_key=f"telegram-replace-{key_id}-{target_version}",
+                )
+                if result["desired_version"] != target_version:
+                    raise InternalApiError("SaaS replacement version is invalid")
+
+            material = {}
+            for _ in range(45):
+                material = await internal_api_client.get_access_material(access_id)
+                if (
+                    material.get("ready") is True
+                    and material.get("desired_version") == target_version
+                ):
+                    break
+                if material.get("status") == "failed":
+                    raise InternalApiError("Access replacement failed", retryable=True)
+                await asyncio.sleep(2)
+            else:
+                raise InternalApiError("Access replacement is still processing", retryable=True)
+            _apply_replacement_material(key, material)
+
+        from bot.keyboards.user import key_issued_kb
+        from bot.utils.key_sender import send_key_with_qr
+        from database.requests import get_key_details_for_user
+
+        updated = get_key_details_for_user(key_id, callback.from_user.id)
+        if not updated:
+            raise InternalApiError("Updated local key projection is missing")
+        await send_key_with_qr(callback, updated, key_issued_kb(), is_new=False)
+    except InternalApiError as error:
+        logger.warning(
+            "SaaS access replacement failed: telegram_id=%s key_id=%s code=%s status=%s retryable=%s",
+            callback.from_user.id,
+            key_id,
+            error.code,
+            error.status,
+            error.retryable,
+        )
+        await safe_edit_or_send(
+            callback.message,
+            "❌ <b>Замена пока не завершена</b>\n\nСтарый ключ сохранён и продолжает работать. Повторите позже.",
+        )
+    except Exception as error:  # noqa: BLE001 - Telegram handler boundary
+        logger.exception(
+            "Local replacement projection failed: telegram_id=%s key_id=%s code=%s",
+            callback.from_user.id,
+            key_id,
+            type(error).__name__,
+        )
+        await safe_edit_or_send(
+            callback.message,
+            "❌ <b>Замена пока не завершена</b>\n\nНовый доступ сохранён в WaveMesh. Повторите замену, чтобы обновить ключ в боте.",
+        )
 
 
 @router.callback_query(F.data.startswith("key_renew:"))
