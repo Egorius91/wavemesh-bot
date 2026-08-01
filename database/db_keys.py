@@ -566,7 +566,66 @@ def create_vpn_key_subscription_admin(
             f"Администратор создал subscription-ключ ID {key_id} для user_id {user_id} "
             f"(sub_id={sub_id[:8]}...)"
         )
-        return key_id
+    return key_id
+
+
+def find_materialized_key_for_user(
+    user_id: int,
+    client_uuid: str,
+    panel_email: str,
+    sub_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Find an already-created SaaS projection after an interrupted callback."""
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM vpn_keys
+            WHERE user_id = ?
+              AND client_uuid = ?
+              AND panel_email = ?
+              AND sub_id = ?
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (user_id, client_uuid, panel_email, sub_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def create_materialized_vpn_key_from_saas(
+    *,
+    user_id: int,
+    server_id: int,
+    tariff_id: int,
+    panel_inbound_id: int,
+    panel_email: str,
+    client_uuid: str,
+    sub_id: str,
+    expires_at: str,
+    traffic_limit: int,
+) -> int:
+    """Create the complete local projection only after SaaS reports READY."""
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO vpn_keys
+            (user_id, server_id, tariff_id, panel_inbound_id, panel_email,
+             client_uuid, sub_id, expires_at, traffic_limit)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                server_id,
+                tariff_id,
+                panel_inbound_id,
+                panel_email,
+                client_uuid,
+                sub_id,
+                expires_at,
+                traffic_limit,
+            ),
+        )
+        return int(cursor.lastrowid)
 
 def delete_vpn_key(key_id: int) -> bool:
     """

@@ -230,7 +230,7 @@ class WaveMeshInternalApiClient:
         *,
         user_id: str,
         tariff_id: str,
-        access_id: str,
+        access_id: str | None = None,
         return_url: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
@@ -238,9 +238,10 @@ class WaveMeshInternalApiClient:
         payload: dict[str, Any] = {
             "user_id": user_id,
             "tariff_id": tariff_id,
-            "access_id": access_id,
             "provider": "YOOKASSA",
         }
+        if access_id:
+            payload["access_id"] = access_id
         if return_url:
             payload["return_url"] = return_url
 
@@ -272,6 +273,34 @@ class WaveMeshInternalApiClient:
                 code="INTERNAL_API_INVALID_RESPONSE",
             )
 
+        return result
+
+    async def link_access_projection(
+        self,
+        *,
+        access_id: str,
+        telegram_id: int,
+        legacy_key_id: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        result = await self._request(
+            "POST",
+            f"bot/accesses/{access_id}/legacy-link",
+            json_body={
+                "telegram_id": str(telegram_id),
+                "legacy_key_id": str(legacy_key_id),
+            },
+            idempotency_key=idempotency_key,
+        )
+        if (
+            not isinstance(result, dict)
+            or result.get("access_id") != access_id
+            or str(result.get("legacy_key_id")) != str(legacy_key_id)
+        ):
+            raise InternalApiError(
+                "Unexpected access projection link response",
+                code="INTERNAL_API_INVALID_RESPONSE",
+            )
         return result
 
     async def create_access(
