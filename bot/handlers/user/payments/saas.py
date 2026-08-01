@@ -9,6 +9,7 @@ WaveMesh SaaS Internal API for the exact mapped access.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from aiogram import F, Router
@@ -26,6 +27,8 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 _CALLBACK_PREFIX = "saas_checkout"
+_NEW_CHECKOUT_PREFIX = "saas_new_checkout"
+_NEW_CHECK_PREFIX = "saas_new_check"
 
 
 def _matching_accesses(accesses: Any, key_id: int) -> list[dict[str, Any]]:
@@ -62,6 +65,237 @@ def _parse_checkout_callback(data: str) -> tuple[int, str] | None:
         return int(raw_key_id), tariff_id
     except (TypeError, ValueError):
         return None
+
+
+def _parse_single_value_callback(data: str, prefix: str) -> str | None:
+    try:
+        actual, value = data.split(":", 1)
+    except (AttributeError, ValueError):
+        return None
+    return value if actual == prefix and value else None
+
+
+def _matching_local_tariffs(
+    local_tariffs: list[dict[str, Any]],
+    saas_tariff: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        tariff
+        for tariff in local_tariffs
+        if int(tariff.get("duration_days") or 0)
+        == int(saas_tariff.get("duration_days") or 0)
+        and float(tariff.get("price_rub") or 0)
+        == float(saas_tariff.get("price_rub") or 0)
+        and int(tariff.get("max_ips") or 0)
+        == int(saas_tariff.get("device_limit") or 0)
+        and int(tariff.get("traffic_limit_gb") or 0)
+        == int(saas_tariff.get("traffic_limit_gb") or 0)
+    ]
+
+
+@router.callback_query(F.data == "buy_key")
+async def saas_new_access_tariffs(callback: CallbackQuery) -> None:
+    """Show SaaS-owned tariffs for a new user access."""
+    try:
+        dashboard, tariffs = await internal_api_client.get_telegram_dashboard(
+            callback.from_user.id,
+        ), await internal_api_client.list_tariffs()
+    except InternalApiError as error:
+        logger.warning(
+            "SaaS new access catalog failed: telegram_id=%s code=%s status=%s",
+            callback.from_user.id,
+            error.code,
+            error.status,
+        )
+        await callback.answer("Не удалось загрузить тарифы WaveMesh.", show_alert=True)
+        return
+    user = dashboard.get("user")
+    if not isinstance(user, dict) or not user.get("user_id"):
+        await callback.answer("Профиль WaveMesh ещё не готов.", show_alert=True)
+        return
+
+    available = [
+        item for item in tariffs
+        if isinstance(item, dict)
+        and isinstance(item.get("tariff_id"), str)
+        and isinstance(item.get("price_rub"), (int, float))
+        and item["price_rub"] > 0
+    ]
+    builder = InlineKeyboardBuilder()
+    for tariff in available:
+        data = f"{_NEW_CHECKOUT_PREFIX}:{tariff['tariff_id']}"
+        if len(data.encode("utf-8")) <= 64:
+            builder.row(InlineKeyboardButton(text=_tariff_button_text(tariff), callback_data=data))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="home"))
+    await safe_edit_or_send(
+        callback.message,
+        "💳 <b>Купить новый ключ</b>\n\nВыберите тариф. Оплата и создание доступа выполняются через WaveMesh SaaS.",
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(f"{_NEW_CHECKOUT_PREFIX}:"))
+async def saas_new_access_checkout(callback: CallbackQuery) -> None:
+    tariff_id = _parse_single_value_callback(callback.data, _NEW_CHECKOUT_PREFIX)
+    if tariff_id is None:
+        await callback.answer("Некорректный тариф.", show_alert=True)
+        return
+    try:
+        dashboard = await internal_api_client.get_telegram_dashboard(callback.from_user.id)
+        tariffs = await internal_api_client.list_tariffs()
+        user = dashboard.get("user")
+        user_id = user.get("user_id") if isinstance(user, dict) else None
+        tariff = next(
+            (
+                item for item in tariffs
+                if isinstance(item, dict) and item.get("tariff_id") == tariff_id
+            ),
+            None,
+        )
+        if not isinstance(user_id, str) or not isinstance(tariff, dict):
+            raise InternalApiError("SaaS checkout context is invalid")
+        result = await internal_api_client.create_order(
+            user_id=user_id,
+            tariff_id=tariff_id,
+            access_id=None,
+            idempotency_key=(
+                f"telegram-new-access-{callback.from_user.id}-{tariff_id}-{callback.id}"
+            ),
+        )
+    except InternalApiError as error:
+        logger.warning(
+            "SaaS new access checkout failed: telegram_id=%s tariff_id=%s code=%s status=%s",
+            callback.from_user.id,
+            tariff_id,
+            error.code,
+            error.status,
+        )
+        await callback.answer("Не удалось создать тестовый платёж.", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="💳 Перейти к оплате", url=result["checkout_url"]))
+    builder.row(
+        InlineKeyboardButton(
+            text="✅ Проверить оплату",
+            callback_data=f"{_NEW_CHECK_PREFIX}:{result['order_id']}",
+        )
+    )
+    builder.row(InlineKeyboardButton(text="⬅️ К тарифам", callback_data="buy_key"))
+    await safe_edit_or_send(
+        callback.message,
+        (
+            "✅ <b>Тестовый платёж создан</b>\n\n"
+            f"🎫 {escape_html(str(tariff.get('name') or 'WaveMesh'))}\n\n"
+            "Завершите оплату в YooKassa, вернитесь в бот и нажмите «Проверить оплату»."
+        ),
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(f"{_NEW_CHECK_PREFIX}:"))
+async def saas_new_access_check(callback: CallbackQuery) -> None:
+    order_id = _parse_single_value_callback(callback.data, _NEW_CHECK_PREFIX)
+    if order_id is None:
+        await callback.answer("Некорректный заказ.", show_alert=True)
+        return
+    try:
+        dashboard = await internal_api_client.get_telegram_dashboard(callback.from_user.id)
+        accesses = dashboard.get("accesses")
+        matches = [
+            item for item in accesses
+            if isinstance(item, dict) and item.get("source_order_id") == order_id
+        ] if isinstance(accesses, list) else []
+        if not matches:
+            await callback.answer(
+                "Платёж ещё не подтверждён YooKassa. Попробуйте немного позже.",
+                show_alert=True,
+            )
+            return
+        if len(matches) != 1:
+            raise InternalApiError("SaaS returned ambiguous paid access")
+        access = matches[0]
+        if access.get("status") != "ready":
+            await callback.answer(
+                "Оплата принята. Entry Node ещё создаёт ключ — проверьте снова через несколько секунд.",
+                show_alert=True,
+            )
+            return
+        material = await internal_api_client.get_access_material(access["access_id"])
+        tariffs = await internal_api_client.list_tariffs()
+        saas_tariff = next(
+            (item for item in tariffs if item.get("tariff_id") == access.get("tariff_id")),
+            None,
+        )
+        if not isinstance(saas_tariff, dict):
+            raise InternalApiError("Paid SaaS tariff is missing")
+
+        from database.requests import get_active_servers, get_all_tariffs, get_user_internal_id
+        from database.db_keys import (
+            create_materialized_vpn_key_from_saas,
+            find_materialized_key_for_user,
+        )
+
+        user_id = get_user_internal_id(callback.from_user.id)
+        servers = get_active_servers()
+        local_tariffs = _matching_local_tariffs(
+            get_all_tariffs(include_hidden=True),
+            saas_tariff,
+        )
+        if not user_id or len(servers) != 1 or len(local_tariffs) != 1:
+            raise InternalApiError("Local SaaS projection mapping is ambiguous")
+        existing = find_materialized_key_for_user(
+            user_id,
+            material["client_uuid"],
+            material["panel_email"],
+            material["sub_id"],
+        )
+        if existing:
+            key_id = int(existing["id"])
+        else:
+            expires_at = datetime.fromisoformat(
+                str(access["expires_at"]).replace("Z", "+00:00")
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            key_id = create_materialized_vpn_key_from_saas(
+                user_id=user_id,
+                server_id=int(servers[0]["id"]),
+                tariff_id=int(local_tariffs[0]["id"]),
+                panel_inbound_id=material["primary_inbound_id"],
+                panel_email=material["panel_email"],
+                client_uuid=material["client_uuid"],
+                sub_id=material["sub_id"],
+                expires_at=expires_at,
+                traffic_limit=int(access.get("traffic_limit_bytes") or 0),
+            )
+        await internal_api_client.link_access_projection(
+            access_id=access["access_id"],
+            telegram_id=callback.from_user.id,
+            legacy_key_id=key_id,
+            idempotency_key=f"paid-access-projection-{access['access_id']}-{key_id}",
+        )
+    except Exception as error:
+        logger.warning(
+            "SaaS paid access projection failed: telegram_id=%s order_id=%s error=%s",
+            callback.from_user.id,
+            order_id,
+            type(error).__name__,
+        )
+        await callback.answer(
+            "Оплата получена, но ключ пока не удалось показать. Не создавайте новый платёж; повторите проверку позже.",
+            show_alert=True,
+        )
+        return
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🔑 Открыть ключ", callback_data=f"key:{key_id}"))
+    await safe_edit_or_send(
+        callback.message,
+        "✅ <b>Новый ключ создан</b>\n\nОплата подтверждена, Entry Node подготовил подписку, ключ добавлен в «Мои ключи».",
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
 
 
 async def _load_checkout_context(

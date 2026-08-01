@@ -1,6 +1,8 @@
 from bot.handlers.user.payments.saas import (
     _matching_accesses,
+    _matching_local_tariffs,
     _parse_checkout_callback,
+    _parse_single_value_callback,
     _tariff_button_text,
 )
 
@@ -37,3 +39,26 @@ def test_tariff_button_text():
             "price_rub": 299,
         }
     ) == "Месяц · 30 дн. · 299 ₽"
+
+
+def test_parse_new_access_callbacks():
+    assert _parse_single_value_callback(
+        "saas_new_checkout:tariff-123",
+        "saas_new_checkout",
+    ) == "tariff-123"
+    assert _parse_single_value_callback("wrong:tariff-123", "saas_new_checkout") is None
+    assert _parse_single_value_callback("saas_new_checkout:", "saas_new_checkout") is None
+
+
+def test_local_tariff_mapping_requires_exact_commercial_shape():
+    saas = {
+        "duration_days": 2,
+        "price_rub": 100,
+        "device_limit": 1,
+        "traffic_limit_gb": 2,
+    }
+    local = [
+        {"id": 1, "duration_days": 2, "price_rub": 100, "max_ips": 1, "traffic_limit_gb": 2},
+        {"id": 2, "duration_days": 2, "price_rub": 100, "max_ips": 2, "traffic_limit_gb": 2},
+    ]
+    assert _matching_local_tariffs(local, saas) == [local[0]]
