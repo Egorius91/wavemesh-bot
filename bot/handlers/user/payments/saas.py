@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime
 from typing import Any
 
@@ -91,6 +92,42 @@ def _matching_local_tariffs(
         == int(saas_tariff.get("device_limit") or 0)
         and int(tariff.get("traffic_limit_gb") or 0)
         == int(saas_tariff.get("traffic_limit_gb") or 0)
+    ]
+
+
+def _configured_projection_tariff_id() -> int | None:
+    raw_value = os.getenv("WAVEMESH_SAAS_PROJECTION_TARIFF_ID")
+    if raw_value is None or not raw_value.strip():
+        return None
+    try:
+        tariff_id = int(raw_value)
+    except ValueError as error:
+        raise InternalApiError(
+            "Configured SaaS projection tariff ID is invalid"
+        ) from error
+    if tariff_id < 1:
+        raise InternalApiError(
+            "Configured SaaS projection tariff ID is invalid"
+        )
+    return tariff_id
+
+
+def _resolve_local_projection_tariffs(
+    local_tariffs: list[dict[str, Any]],
+    saas_tariff: dict[str, Any],
+) -> list[dict[str, Any]]:
+    exact_matches = _matching_local_tariffs(local_tariffs, saas_tariff)
+    if exact_matches:
+        return exact_matches
+
+    configured_tariff_id = _configured_projection_tariff_id()
+    if configured_tariff_id is None:
+        return []
+
+    return [
+        tariff
+        for tariff in local_tariffs
+        if int(tariff.get("id") or 0) == configured_tariff_id
     ]
 
 
@@ -267,7 +304,7 @@ async def saas_new_access_check(callback: CallbackQuery) -> None:
 
         user_id = get_user_internal_id(callback.from_user.id)
         servers = get_active_servers()
-        local_tariffs = _matching_local_tariffs(
+        local_tariffs = _resolve_local_projection_tariffs(
             get_all_tariffs(include_hidden=True),
             saas_tariff,
         )
