@@ -1,6 +1,7 @@
 from bot.handlers.user.payments.saas import (
     _matching_accesses,
     _matching_local_tariffs,
+    _resolve_local_projection_tariffs,
     _key_matches_material,
     _parse_checkout_callback,
     _parse_single_value_callback,
@@ -80,3 +81,50 @@ def test_key_material_match_is_exact():
     }
     assert _key_matches_material(key, material)
     assert not _key_matches_material(key, {**material, "sub_id": "replacement"})
+
+
+def test_projection_tariff_falls_back_to_explicit_configuration(monkeypatch):
+    saas = {
+        "duration_days": 30,
+        "price_rub": 299,
+        "device_limit": 1,
+        "traffic_limit_gb": None,
+    }
+    local = [
+        {"id": 1, "duration_days": 365, "price_rub": 0, "max_ips": 1, "traffic_limit_gb": 0},
+        {"id": 2, "duration_days": 1, "price_rub": 100, "max_ips": 1, "traffic_limit_gb": 0},
+    ]
+    monkeypatch.setenv("WAVEMESH_SAAS_PROJECTION_TARIFF_ID", "1")
+
+    assert _resolve_local_projection_tariffs(local, saas) == [local[0]]
+
+
+def test_exact_projection_tariff_precedes_configured_fallback(monkeypatch):
+    saas = {
+        "duration_days": 30,
+        "price_rub": 299,
+        "device_limit": 1,
+        "traffic_limit_gb": 0,
+    }
+    local = [
+        {"id": 1, "duration_days": 365, "price_rub": 0, "max_ips": 1, "traffic_limit_gb": 0},
+        {"id": 2, "duration_days": 30, "price_rub": 299, "max_ips": 1, "traffic_limit_gb": 0},
+    ]
+    monkeypatch.setenv("WAVEMESH_SAAS_PROJECTION_TARIFF_ID", "1")
+
+    assert _resolve_local_projection_tariffs(local, saas) == [local[1]]
+
+
+def test_projection_tariff_stays_fail_closed_without_configuration(monkeypatch):
+    saas = {
+        "duration_days": 30,
+        "price_rub": 299,
+        "device_limit": 1,
+        "traffic_limit_gb": None,
+    }
+    local = [
+        {"id": 1, "duration_days": 365, "price_rub": 0, "max_ips": 1, "traffic_limit_gb": 0},
+    ]
+    monkeypatch.delenv("WAVEMESH_SAAS_PROJECTION_TARIFF_ID", raising=False)
+
+    assert _resolve_local_projection_tariffs(local, saas) == []
