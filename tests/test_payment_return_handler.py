@@ -161,52 +161,58 @@ class PaymentReturnMaterializationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         payment_return._ACCESS_LOCKS.clear()
 
-    def _api_patches(self, access):
-        return (
+    @contextmanager
+    def _mock_api(self, access):
+        dashboard_mock = AsyncMock(return_value={"accesses": [access]})
+        material_mock = AsyncMock(return_value=ready_material())
+        tariffs_mock = AsyncMock(
+            return_value=[
+                {
+                    "tariff_id": REMOTE_TARIFF_ID,
+                    "duration_days": 30,
+                    "price_rub": 299,
+                    "device_limit": 1,
+                    "traffic_limit_gb": 0,
+                }
+            ]
+        )
+        link_mock = AsyncMock(
+            return_value={
+                "access_id": ACCESS_ID,
+                "legacy_key_id": "55",
+            }
+        )
+
+        with (
             patch.object(
                 payment_return.internal_api_client,
                 "get_telegram_dashboard",
-                AsyncMock(return_value={"accesses": [access]}),
+                dashboard_mock,
             ),
             patch.object(
                 payment_return.internal_api_client,
                 "get_access_material",
-                AsyncMock(return_value=ready_material()),
+                material_mock,
             ),
             patch.object(
                 payment_return.internal_api_client,
                 "list_tariffs",
-                AsyncMock(
-                    return_value=[
-                        {
-                            "tariff_id": REMOTE_TARIFF_ID,
-                            "duration_days": 30,
-                            "price_rub": 299,
-                            "device_limit": 1,
-                            "traffic_limit_gb": 0,
-                        }
-                    ]
-                ),
+                tariffs_mock,
             ),
             patch.object(
                 payment_return.internal_api_client,
                 "link_access_projection",
-                AsyncMock(
-                    return_value={
-                        "access_id": ACCESS_ID,
-                        "legacy_key_id": "55",
-                    }
-                ),
+                link_mock,
             ),
-        )
+        ):
+            yield link_mock
 
     async def test_repeated_ready_return_reuses_existing_projection(self):
         existing = local_key()
         final_key = {**existing, "display_name": "abcd...mnop"}
-        api_patches = self._api_patches(ready_access())
 
         with (
-            *api_patches,
+            self._mock_api(ready_access()) as link_mock,
             patch(
                 "bot.handlers.user.payments.saas._resolve_local_projection_tariffs",
                 return_value=[{"id": LOCAL_TARIFF_ID}],
@@ -237,7 +243,7 @@ class PaymentReturnMaterializationTests(unittest.IsolatedAsyncioTestCase):
         create_key.assert_not_called()
         refresh_key.assert_not_called()
         get_servers.assert_not_called()
-        payment_return.internal_api_client.link_access_projection.assert_awaited_once_with(
+        link_mock.assert_awaited_once_with(
             access_id=ACCESS_ID,
             telegram_id=TELEGRAM_ID,
             legacy_key_id=55,
@@ -247,10 +253,9 @@ class PaymentReturnMaterializationTests(unittest.IsolatedAsyncioTestCase):
     async def test_ready_renewal_refreshes_existing_projection_once(self):
         existing = local_key(expires_at="2026-08-01 12:30:00")
         final_key = local_key()
-        api_patches = self._api_patches(ready_access())
 
         with (
-            *api_patches,
+            self._mock_api(ready_access()),
             patch(
                 "bot.handlers.user.payments.saas._resolve_local_projection_tariffs",
                 return_value=[{"id": LOCAL_TARIFF_ID}],
@@ -294,10 +299,9 @@ class PaymentReturnMaterializationTests(unittest.IsolatedAsyncioTestCase):
             **local_key(),
             "display_name": "abcd...mnop",
         }
-        api_patches = self._api_patches(ready_access())
 
         with (
-            *api_patches,
+            self._mock_api(ready_access()),
             patch(
                 "bot.handlers.user.payments.saas._resolve_local_projection_tariffs",
                 return_value=[{"id": LOCAL_TARIFF_ID}],
