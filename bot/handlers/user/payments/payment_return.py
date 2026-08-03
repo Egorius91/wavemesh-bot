@@ -93,6 +93,28 @@ def _normalize_expiry(value: Any) -> str:
     return parsed.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _local_projection_needs_refresh(
+    existing: dict[str, Any],
+    *,
+    tariff_id: int,
+    expires_at: str,
+    traffic_limit: int,
+) -> bool:
+    """Compare all commercial fields refreshed by a verified paid period."""
+    try:
+        current_expiry = _normalize_expiry(existing.get("expires_at"))
+        current_tariff_id = int(existing.get("tariff_id") or 0)
+        current_traffic_limit = max(0, int(existing.get("traffic_limit") or 0))
+    except (TypeError, ValueError):
+        return True
+
+    return (
+        current_expiry != expires_at
+        or current_tariff_id != tariff_id
+        or current_traffic_limit != traffic_limit
+    )
+
+
 def _single_dashboard_access(
     dashboard: dict[str, Any],
     access_id: str,
@@ -199,11 +221,12 @@ async def materialize_ready_payment_return(
         from bot.handlers.user.payments.saas import (
             _resolve_local_projection_tariffs,
         )
-        from database.db_key_expiry import set_vpn_key_expiry
         from database.db_keys import (
             create_materialized_vpn_key_from_saas,
             find_materialized_key_for_user,
-            update_vpn_key_tariff_and_traffic_limit,
+        )
+        from database.payment_return_projection import (
+            refresh_materialized_key_from_saas,
         )
         from database.requests import (
             get_active_servers,
@@ -229,6 +252,7 @@ async def materialize_ready_payment_return(
                 code="LOCAL_PROJECTION_NOT_READY",
             )
 
+        local_tariff_id = int(local_tariffs[0]["id"])
         expires_at = _normalize_expiry(access.get("expires_at"))
         try:
             traffic_limit = max(0, int(access.get("traffic_limit_bytes") or 0))
@@ -253,20 +277,20 @@ async def materialize_ready_payment_return(
 
         if existing:
             key_id = int(existing["id"])
-            current_expiry = _normalize_expiry(existing.get("expires_at"))
-            if current_expiry != expires_at:
-                if not set_vpn_key_expiry(key_id, expires_at):
-                    raise InternalApiError(
-                        "Local key expiry update failed",
-                        code="LOCAL_PROJECTION_FAILED",
-                    )
-                if not update_vpn_key_tariff_and_traffic_limit(
-                    key_id,
-                    int(local_tariffs[0]["id"]),
-                    traffic_limit,
+            if _local_projection_needs_refresh(
+                existing,
+                tariff_id=local_tariff_id,
+                expires_at=expires_at,
+                traffic_limit=traffic_limit,
+            ):
+                if not refresh_materialized_key_from_saas(
+                    key_id=key_id,
+                    tariff_id=local_tariff_id,
+                    expires_at=expires_at,
+                    traffic_limit=traffic_limit,
                 ):
                     raise InternalApiError(
-                        "Local key tariff update failed",
+                        "Local key renewal projection failed",
                         code="LOCAL_PROJECTION_FAILED",
                     )
                 outcome = "renewed"
@@ -282,7 +306,7 @@ async def materialize_ready_payment_return(
             key_id = create_materialized_vpn_key_from_saas(
                 user_id=int(user_id),
                 server_id=int(servers[0]["id"]),
-                tariff_id=int(local_tariffs[0]["id"]),
+                tariff_id=local_tariff_id,
                 panel_inbound_id=int(material["primary_inbound_id"]),
                 panel_email=str(material["panel_email"]),
                 client_uuid=str(material["client_uuid"]),
@@ -365,7 +389,7 @@ async def _render_ready_result(
 @router.message(
     Command("start"),
     StateFilter("*"),
-    F.text.regexp(_PAYMENT_RETURN_COMMAND_PATTERN),
+    F.text.regexp(_PAYMENT_RETURN_COMMAND_PATTERN.pattern),
 )
 async def payment_return_deeplink(
     message: Message,
