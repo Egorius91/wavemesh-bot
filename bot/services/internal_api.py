@@ -5,12 +5,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from typing import Any
 from uuid import uuid4
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+_PAYMENT_RETURN_TOKEN_PATTERN = re.compile(r"^pay_[A-Za-z0-9_-]{32}$")
+_PAYMENT_RETURN_STATUSES = frozenset(
+    {
+        "pending",
+        "cancelled",
+        "access_creating",
+        "ready",
+        "support_error",
+    }
+)
 
 
 class InternalApiError(RuntimeError):
@@ -232,9 +244,27 @@ class WaveMeshInternalApiClient:
         tariff_id: str,
         access_id: str | None = None,
         return_url: str | None = None,
+        return_channel: str | None = "TELEGRAM",
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Создаёт SaaS order для конкретного доступа и возвращает checkout."""
+        """Создаёт SaaS order и запрашивает безопасный возврат в Telegram."""
+        if return_url and return_channel:
+            raise InternalApiError(
+                "return_url and return_channel are mutually exclusive",
+                code="INTERNAL_API_INVALID_REQUEST",
+            )
+
+        normalized_return_channel = (
+            return_channel.strip().upper()
+            if isinstance(return_channel, str)
+            else None
+        )
+        if normalized_return_channel not in {None, "TELEGRAM"}:
+            raise InternalApiError(
+                "Unsupported payment return channel",
+                code="INTERNAL_API_INVALID_REQUEST",
+            )
+
         payload: dict[str, Any] = {
             "user_id": user_id,
             "tariff_id": tariff_id,
@@ -244,6 +274,8 @@ class WaveMeshInternalApiClient:
             payload["access_id"] = access_id
         if return_url:
             payload["return_url"] = return_url
+        if normalized_return_channel:
+            payload["return_channel"] = normalized_return_channel
 
         result = await self._request(
             "POST",
@@ -270,6 +302,56 @@ class WaveMeshInternalApiClient:
         ):
             raise InternalApiError(
                 "Unexpected checkout response",
+                code="INTERNAL_API_INVALID_RESPONSE",
+            )
+
+        return result
+
+    async def resolve_payment_return(
+        self,
+        token: str,
+    ) -> dict[str, Any]:
+        """Разрешает opaque Telegram return token без передачи его в URL."""
+        if not isinstance(token, str) or not _PAYMENT_RETURN_TOKEN_PATTERN.fullmatch(token):
+            raise InternalApiError(
+                "Invalid payment return token",
+                code="PAYMENT_RETURN_TOKEN_INVALID",
+            )
+
+        result = await self._request(
+            "POST",
+            "bot/payment-returns/resolve",
+            json_body={"token": token},
+        )
+
+        if not isinstance(result, dict):
+            raise InternalApiError(
+                "Unexpected payment return response",
+                code="INTERNAL_API_INVALID_RESPONSE",
+            )
+
+        status = result.get("status")
+        access_id = result.get("access_id")
+        retryable = result.get("retryable")
+        expected_retryable = status in {"pending", "access_creating"}
+        if (
+            result.get("schema_version") != 1
+            or result.get("channel") != "TELEGRAM"
+            or status not in _PAYMENT_RETURN_STATUSES
+            or not isinstance(result.get("order_id"), str)
+            or not result["order_id"]
+            or not isinstance(retryable, bool)
+            or retryable is not expected_retryable
+            or not isinstance(result.get("token_expires_at"), str)
+            or not result["token_expires_at"]
+            or (
+                status == "ready"
+                and (not isinstance(access_id, str) or not access_id)
+            )
+            or (status != "ready" and access_id is not None)
+        ):
+            raise InternalApiError(
+                "Unexpected payment return response",
                 code="INTERNAL_API_INVALID_RESPONSE",
             )
 

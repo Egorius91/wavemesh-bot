@@ -1,0 +1,65 @@
+name: Payment return checks
+
+on:
+  pull_request:
+
+jobs:
+  payment-return:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prepare config
+        run: cp config.example.py config.py
+
+      - name: Compile payment return modules
+        run: |
+          python -m py_compile \
+            bot/services/internal_api.py \
+            bot/handlers/user/payments/payment_return.py \
+            database/payment_return_projection.py \
+            tests/test_internal_api_payment_return.py \
+            tests/test_payment_return_handler.py
+
+      - name: SaaS router import smoke test
+        env:
+          WAVEMESH_SAAS_CLIENT_MODE: 'true'
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          from bot.handlers.user.payments import router
+          from bot.handlers.user.payments.payment_return import (
+              extract_payment_return_payload,
+          )
+
+          token = 'pay_' + 'A' * 32
+          if extract_payment_return_payload(f'/start {token}') != token:
+              raise SystemExit('payment return router contract is unavailable')
+          if not router.sub_routers:
+              raise SystemExit('payment routers were not assembled')
+          print('SaaS payment return router import ok')
+          PY
+
+      - name: Internal API payment return tests
+        env:
+          WAVEMESH_SAAS_CLIENT_MODE: 'true'
+          PYTHONPATH: .
+        run: python tests/test_internal_api_payment_return.py
+
+      - name: Payment return materialization tests
+        env:
+          WAVEMESH_SAAS_CLIENT_MODE: 'true'
+          PYTHONPATH: .
+        run: python tests/test_payment_return_handler.py

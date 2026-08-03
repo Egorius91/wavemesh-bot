@@ -15,11 +15,14 @@ from .demo import router as demo_router
 
 router = Router()
 
-# In SaaS client mode this router must be first: it owns key_renew callbacks
-# and creates orders only through WaveMesh Internal API.
+# In SaaS client mode these routers must be first: the payment-return router
+# owns only exact ``/start pay_<opaque-token>`` messages, while the checkout
+# router owns key_renew callbacks and creates orders through Internal API.
 if saas_client_mode_enabled():
+    from .payment_return import router as payment_return_router
     from .saas import router as saas_router
 
+    router.include_router(payment_return_router)
     router.include_router(saas_router)
 
 router.include_router(base_router)
