@@ -73,6 +73,69 @@ logging.basicConfig(
 logging.getLogger("aiohttp").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+_BACKGROUND_TASKS: list[asyncio.Task] = []
+
+
+def start_legacy_background_tasks(bot: Bot) -> None:
+    """Start optional legacy jobs only after authoritative startup succeeds."""
+    if _BACKGROUND_TASKS:
+        return
+
+    task_specs = [
+        (
+            "WAVEMESH_LEGACY_DAILY_TASKS_ENABLED",
+            "legacy daily tasks",
+            lambda: run_daily_tasks(bot),
+        ),
+        (
+            "WAVEMESH_LEGACY_UPDATE_CHECK_ENABLED",
+            "legacy update check",
+            lambda: run_update_check_scheduler(bot),
+        ),
+        (
+            "WAVEMESH_LEGACY_TRAFFIC_SYNC_ENABLED",
+            "legacy traffic sync",
+            lambda: run_traffic_sync_scheduler(bot),
+        ),
+        (
+            "WAVEMESH_LEGACY_EXPIRED_RECONCILER_ENABLED",
+            "legacy expired subscription reconciler",
+            run_expired_key_reconciler,
+        ),
+        (
+            "WAVEMESH_LEGACY_SUBSCRIPTION_BILLING_ENABLED",
+            "legacy subscription billing",
+            lambda: run_subscription_billing_scheduler(
+                bot,
+                interval_seconds=300,
+            ),
+        ),
+    ]
+
+    for flag_name, task_name, coroutine_factory in task_specs:
+        default_enabled = not saas_client_mode_enabled()
+        if env_flag(flag_name, default=default_enabled):
+            _BACKGROUND_TASKS.append(
+                asyncio.create_task(
+                    coroutine_factory(),
+                    name=task_name.replace(" ", "-"),
+                )
+            )
+            logger.info("%s enabled by %s", task_name, flag_name)
+        else:
+            logger.info("%s disabled by %s", task_name, flag_name)
+
+
+async def stop_legacy_background_tasks() -> None:
+    """Cancel jobs created after a successful startup."""
+    tasks = list(_BACKGROUND_TASKS)
+    _BACKGROUND_TASKS.clear()
+
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
 
 async def on_startup(bot: Bot):
     """Действия при запуске бота."""
@@ -119,6 +182,8 @@ async def on_startup(bot: Bot):
     bot.my_username = bot_info.username
     logger.info(f"✅ Бот запущен: @{bot_info.username}")
 
+    start_legacy_background_tasks(bot)
+
     from bot.utils.update_block import is_update_blocked, get_blocked_message
     if is_update_blocked():
         from config import ADMIN_IDS
@@ -146,6 +211,7 @@ async def on_shutdown(bot: Bot):
     """Действия при остановке бота."""
     logger.info("🛑 Бот останавливается...")
 
+    await stop_legacy_background_tasks()
     await stop_access_shadow_outbox_worker()
     await close_all_clients()
     await internal_api_client.close()
@@ -215,57 +281,10 @@ async def main():
 
     await bot.delete_webhook(drop_pending_updates=True)
 
-    background_tasks: list[asyncio.Task] = []
-    task_specs = [
-        (
-            "WAVEMESH_LEGACY_DAILY_TASKS_ENABLED",
-            "legacy daily tasks",
-            lambda: run_daily_tasks(bot),
-        ),
-        (
-            "WAVEMESH_LEGACY_UPDATE_CHECK_ENABLED",
-            "legacy update check",
-            lambda: run_update_check_scheduler(bot),
-        ),
-        (
-            "WAVEMESH_LEGACY_TRAFFIC_SYNC_ENABLED",
-            "legacy traffic sync",
-            lambda: run_traffic_sync_scheduler(bot),
-        ),
-        (
-            "WAVEMESH_LEGACY_EXPIRED_RECONCILER_ENABLED",
-            "legacy expired subscription reconciler",
-            run_expired_key_reconciler,
-        ),
-        (
-            "WAVEMESH_LEGACY_SUBSCRIPTION_BILLING_ENABLED",
-            "legacy subscription billing",
-            lambda: run_subscription_billing_scheduler(
-                bot,
-                interval_seconds=300,
-            ),
-        ),
-    ]
-
-    for flag_name, task_name, coroutine_factory in task_specs:
-        default_enabled = not saas_client_mode_enabled()
-        if env_flag(flag_name, default=default_enabled):
-            background_tasks.append(
-                asyncio.create_task(
-                    coroutine_factory(),
-                    name=task_name.replace(" ", "-"),
-                )
-            )
-            logger.info("%s enabled by %s", task_name, flag_name)
-        else:
-            logger.info("%s disabled by %s", task_name, flag_name)
-
     try:
         await dp.start_polling(bot)
     finally:
-        for task in background_tasks:
-            task.cancel()
-        await asyncio.gather(*background_tasks, return_exceptions=True)
+        await stop_legacy_background_tasks()
         await close_all_clients()
         await bot.session.close()
 
