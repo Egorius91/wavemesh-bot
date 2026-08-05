@@ -35,6 +35,10 @@ from bot.services.internal_api import (
     startup_probe as internal_api_startup_probe,
 )
 from bot.services.runtime_mode import env_flag, saas_client_mode_enabled
+from bot.services.startup_policy import (
+    InternalApiStartupRequired,
+    enforce_internal_api_startup,
+)
 from bot.services.xui_write_guard import install_xui_write_guard
 from bot.services.commercial_write_guard import install_commercial_write_guard
 
@@ -75,12 +79,26 @@ async def on_startup(bot: Bot):
     logger.info("🚀 Бот запускается...")
 
     install_xui_write_guard()
+
+    saas_mode = saas_client_mode_enabled()
+    internal_api_ready = await internal_api_startup_probe()
+    try:
+        enforce_internal_api_startup(
+            internal_api_ready=internal_api_ready,
+            saas_client_mode=saas_mode,
+        )
+    except InternalApiStartupRequired as error:
+        logger.critical(
+            "WaveMesh SaaS startup blocked: code=%s",
+            error.code,
+        )
+        raise
+
     run_migrations()
     apply_wavemesh_branding_defaults()
     ensure_access_shadow_outbox_schema()
     ensure_access_shadow_outbox_triggers()
 
-    internal_api_ready = await internal_api_startup_probe()
     access_shadow_enabled = env_flag(
         "WAVEMESH_ACCESS_SHADOW_SYNC_ENABLED",
         default=False,
@@ -94,7 +112,7 @@ async def on_startup(bot: Bot):
             "WaveMesh access shadow worker and reconciliation are disabled"
         )
 
-    if saas_client_mode_enabled():
+    if saas_mode:
         logger.info("WaveMesh SaaS client mode is enabled")
 
     bot_info = await bot.get_me()
