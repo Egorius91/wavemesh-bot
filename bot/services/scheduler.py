@@ -597,8 +597,6 @@ async def check_and_notify_updates(bot: Bot) -> None:
         logger.info("🔒 Обновления заблокированы, отправляем уведомление")
         msg = get_blocked_message()
         # Кнопка OK для закрытия уведомления
-        from aiogram.types import InlineKeyboardButton
-        from aiogram.utils.keyboard import InlineKeyboardBuilder
         builder = InlineKeyboardBuilder()
         builder.row(InlineKeyboardButton(text="✅ OK", callback_data="dismiss_msg"))
         kb = builder.as_markup()
