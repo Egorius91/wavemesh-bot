@@ -6,8 +6,11 @@ from bot.handlers.user.payments import payment_return
 from bot.handlers.user.payments.payment_return import (
     _local_projection_needs_refresh,
     extract_payment_return_payload,
+    PaymentReturnMaterialization,
+    VerifiedReadyPaymentReturn,
     materialize_ready_payment_return,
     payment_return_status_text,
+    process_ready_payment_return,
 )
 from bot.services.internal_api import InternalApiError
 from database.payment_return_projection import refresh_materialized_key_from_saas
@@ -342,6 +345,188 @@ class PaymentReturnMaterializationTests(unittest.IsolatedAsyncioTestCase):
             sub_id="abcdefghijklmnop",
             expires_at=EXPIRY,
             traffic_limit=TRAFFIC_LIMIT,
+        )
+
+
+class PaymentReturnDirectDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    def verified(self):
+        return VerifiedReadyPaymentReturn(
+            access_id=ACCESS_ID,
+            subscription_url=ready_material()["subscription_url"],
+            access=ready_access(),
+            material=ready_material(),
+        )
+
+    async def test_authoritative_url_is_rendered_before_local_projection(self):
+        events = []
+        message = MagicMock()
+        verified = self.verified()
+        projection = PaymentReturnMaterialization(
+            key_id=55,
+            key=local_key(),
+            outcome="created",
+        )
+
+        async def render_remote(*args, **kwargs):
+            events.append("remote")
+
+        async def project(*args, **kwargs):
+            events.append("projection")
+            return projection
+
+        async def confirm(*args, **kwargs):
+            events.append("confirmation")
+
+        with (
+            patch.object(
+                payment_return,
+                "load_verified_ready_payment_return",
+                AsyncMock(return_value=verified),
+            ),
+            patch.object(
+                payment_return,
+                "_render_verified_subscription",
+                side_effect=render_remote,
+            ),
+            patch.object(
+                payment_return,
+                "materialize_ready_payment_return",
+                side_effect=project,
+            ) as project_mock,
+            patch.object(
+                payment_return,
+                "_render_projection_confirmation",
+                side_effect=confirm,
+            ),
+        ):
+            await process_ready_payment_return(
+                message=message,
+                telegram_id=TELEGRAM_ID,
+                access_id=ACCESS_ID,
+            )
+
+        self.assertEqual(events, ["remote", "projection", "confirmation"])
+        project_mock.assert_awaited_once_with(
+            telegram_id=TELEGRAM_ID,
+            access_id=ACCESS_ID,
+            verified=verified,
+        )
+
+    async def test_expected_local_projection_failure_keeps_delivered_url(self):
+        verified = self.verified()
+        with (
+            patch.object(
+                payment_return,
+                "load_verified_ready_payment_return",
+                AsyncMock(return_value=verified),
+            ),
+            patch.object(
+                payment_return,
+                "_render_verified_subscription",
+                AsyncMock(),
+            ) as render_mock,
+            patch.object(
+                payment_return,
+                "materialize_ready_payment_return",
+                AsyncMock(
+                    side_effect=InternalApiError(
+                        "local projection unavailable",
+                        code="LOCAL_PROJECTION_NOT_READY",
+                    )
+                ),
+            ),
+            patch.object(
+                payment_return,
+                "_render_projection_confirmation",
+                AsyncMock(),
+            ) as confirmation_mock,
+        ):
+            await process_ready_payment_return(
+                message=MagicMock(),
+                telegram_id=TELEGRAM_ID,
+                access_id=ACCESS_ID,
+            )
+
+        render_mock.assert_awaited_once()
+        confirmation_mock.assert_not_awaited()
+
+    async def test_retryable_local_projection_failure_keeps_delivered_url(self):
+        verified = self.verified()
+        with (
+            patch.object(
+                payment_return,
+                "load_verified_ready_payment_return",
+                AsyncMock(return_value=verified),
+            ),
+            patch.object(
+                payment_return,
+                "_render_verified_subscription",
+                AsyncMock(),
+            ) as render_mock,
+            patch.object(
+                payment_return,
+                "materialize_ready_payment_return",
+                AsyncMock(
+                    side_effect=InternalApiError(
+                        "temporary local projection error",
+                        code="LOCAL_PROJECTION_RETRY",
+                        retryable=True,
+                    )
+                ),
+            ),
+        ):
+            await process_ready_payment_return(
+                message=MagicMock(),
+                telegram_id=TELEGRAM_ID,
+                access_id=ACCESS_ID,
+            )
+
+        render_mock.assert_awaited_once()
+
+    async def test_unexpected_local_projection_failure_keeps_delivered_url(self):
+        verified = self.verified()
+        with (
+            patch.object(
+                payment_return,
+                "load_verified_ready_payment_return",
+                AsyncMock(return_value=verified),
+            ),
+            patch.object(
+                payment_return,
+                "_render_verified_subscription",
+                AsyncMock(),
+            ) as render_mock,
+            patch.object(
+                payment_return,
+                "materialize_ready_payment_return",
+                AsyncMock(side_effect=RuntimeError("sqlite failure")),
+            ),
+        ):
+            await process_ready_payment_return(
+                message=MagicMock(),
+                telegram_id=TELEGRAM_ID,
+                access_id=ACCESS_ID,
+            )
+
+        render_mock.assert_awaited_once()
+
+    async def test_direct_renderer_uses_subscription_mode_without_legacy_markup(self):
+        verified = self.verified()
+        with patch(
+            "bot.utils.key_sender_core.render_key_delivery_page",
+            new=AsyncMock(),
+        ) as render_page:
+            await payment_return._render_verified_subscription(
+                MagicMock(),
+                verified,
+            )
+
+        render_page.assert_awaited_once_with(
+            unittest.mock.ANY,
+            raw_value=verified.subscription_url,
+            is_new=True,
+            kind="subscription",
+            attach_markup=False,
         )
 
 
