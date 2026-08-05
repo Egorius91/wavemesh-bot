@@ -22,6 +22,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install focused test dependency
+        run: python -m pip install --disable-pip-version-check pytest
+
       - name: Apply patch
         run: python tools/apply_update_check_scope_fix.py
 
