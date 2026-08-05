@@ -9,10 +9,30 @@ User=wavemesh
 Group=wavemesh
 WorkingDirectory=/opt/wavemesh-bot
 Environment=PYTHONUNBUFFERED=1
+UMask=0077
+ExecStartPre=-/usr/bin/chmod 0600 /opt/wavemesh-bot/database/wavemesh_bot.db
+ExecStartPre=-/usr/bin/chmod 0600 /opt/wavemesh-bot/logs/bot.log
 ExecStart=/opt/wavemesh-bot/.venv/bin/python /opt/wavemesh-bot/main.py
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/opt/wavemesh-bot
 
 [Install]
 WantedBy=multi-user.target
