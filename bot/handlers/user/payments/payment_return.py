@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -40,6 +40,14 @@ class PaymentReturnMaterialization:
     key_id: int
     key: dict[str, Any]
     outcome: str
+
+
+@dataclass(frozen=True)
+class VerifiedReadyPaymentReturn:
+    access_id: str
+    subscription_url: str = field(repr=False)
+    access: dict[str, Any] = field(repr=False)
+    material: dict[str, Any] = field(repr=False)
 
 
 def extract_payment_return_payload(text: str | None) -> str | None:
@@ -190,30 +198,57 @@ def _local_key_from_declared_projection(
     return key
 
 
+async def load_verified_ready_payment_return(
+    *,
+    telegram_id: int,
+    access_id: str,
+) -> VerifiedReadyPaymentReturn:
+    """Load one user-owned ready access and its validated SaaS material."""
+    dashboard = await internal_api_client.get_telegram_dashboard(telegram_id)
+    access = _single_dashboard_access(dashboard, access_id)
+    if access.get("status") != "ready":
+        raise InternalApiError(
+            "Paid access is not ready yet",
+            code="ACCESS_MATERIAL_NOT_READY",
+            retryable=True,
+        )
+
+    material = await internal_api_client.get_access_material(access_id)
+    if material.get("ready") is not True:
+        raise InternalApiError(
+            "Paid access material is not ready yet",
+            code="ACCESS_MATERIAL_NOT_READY",
+            retryable=True,
+        )
+
+    return VerifiedReadyPaymentReturn(
+        access_id=access_id,
+        subscription_url=str(material["subscription_url"]),
+        access=access,
+        material=material,
+    )
+
+
 async def materialize_ready_payment_return(
     *,
     telegram_id: int,
     access_id: str,
+    verified: VerifiedReadyPaymentReturn | None = None,
 ) -> PaymentReturnMaterialization:
-    """Materialize or refresh one local key projection, serialized per access."""
+    """Materialize or refresh one optional local compatibility projection."""
     lock = _ACCESS_LOCKS.setdefault(access_id, asyncio.Lock())
     async with lock:
-        dashboard = await internal_api_client.get_telegram_dashboard(telegram_id)
-        access = _single_dashboard_access(dashboard, access_id)
-        if access.get("status") != "ready":
+        resolved = verified or await load_verified_ready_payment_return(
+            telegram_id=telegram_id,
+            access_id=access_id,
+        )
+        if resolved.access_id != access_id:
             raise InternalApiError(
-                "Paid access is not ready yet",
-                code="ACCESS_MATERIAL_NOT_READY",
-                retryable=True,
+                "Verified payment access does not match the requested access",
+                code="INTERNAL_API_INVALID_RESPONSE",
             )
-
-        material = await internal_api_client.get_access_material(access_id)
-        if material.get("ready") is not True:
-            raise InternalApiError(
-                "Paid access material is not ready yet",
-                code="ACCESS_MATERIAL_NOT_READY",
-                retryable=True,
-            )
+        access = resolved.access
+        material = resolved.material
 
         tariffs = await internal_api_client.list_tariffs()
         saas_tariff = _single_saas_tariff(tariffs, access.get("tariff_id"))
@@ -348,34 +383,40 @@ def _key_button(key_id: int):
     return builder.as_markup()
 
 
-async def _render_ready_result(
+async def _render_verified_subscription(
+    message: Message,
+    verified: VerifiedReadyPaymentReturn,
+) -> None:
+    """Deliver the authoritative SaaS URL before any local projection work."""
+    from bot.utils.key_sender_core import render_key_delivery_page
+
+    await render_key_delivery_page(
+        message,
+        raw_value=verified.subscription_url,
+        is_new=True,
+        kind="subscription",
+        attach_markup=False,
+    )
+
+
+async def _render_projection_confirmation(
     message: Message,
     materialization: PaymentReturnMaterialization,
 ) -> None:
     if materialization.outcome == "created":
-        await safe_edit_or_send(
-            message,
-            "✅ <b>Оплата подтверждена</b>\n\nДоступ создан и добавлен в «Мои ключи».",
-            force_new=True,
+        text = (
+            "✅ <b>Доступ добавлен в «Мои ключи»</b>\n\n"
+            "Subscription-ссылка уже выдана выше."
         )
-        from bot.utils.key_sender import send_key_with_qr
-
-        await send_key_with_qr(
-            message,
-            materialization.key,
-            is_new=True,
-        )
-        return
-
-    if materialization.outcome == "renewed":
+    elif materialization.outcome == "renewed":
         text = (
             "✅ <b>Подписка продлена</b>\n\n"
-            "Оплата подтверждена, новый срок и тариф синхронизированы с WaveMesh."
+            "Новый срок и тариф синхронизированы с WaveMesh."
         )
     else:
         text = (
             "✅ <b>Доступ уже готов</b>\n\n"
-            "Этот платёж уже обработан. Ключ находится в разделе «Мои ключи»."
+            "Subscription-ссылка выдана выше, а ключ доступен в «Моих ключах»."
         )
 
     await safe_edit_or_send(
@@ -384,6 +425,48 @@ async def _render_ready_result(
         reply_markup=_key_button(materialization.key_id),
         force_new=True,
     )
+
+
+async def process_ready_payment_return(
+    *,
+    message: Message,
+    telegram_id: int,
+    access_id: str,
+) -> None:
+    """Deliver verified SaaS material, then best-effort the legacy projection."""
+    verified = await load_verified_ready_payment_return(
+        telegram_id=telegram_id,
+        access_id=access_id,
+    )
+    await _render_verified_subscription(message, verified)
+
+    try:
+        materialization = await materialize_ready_payment_return(
+            telegram_id=telegram_id,
+            access_id=access_id,
+            verified=verified,
+        )
+    except InternalApiError as error:
+        logger.warning(
+            "Payment return local projection skipped: telegram_id=%s "
+            "access_id=%s code=%s status=%s retryable=%s",
+            telegram_id,
+            access_id,
+            error.code,
+            error.status,
+            error.retryable,
+        )
+        return
+    except Exception:
+        logger.exception(
+            "Unexpected payment return local projection error: telegram_id=%s "
+            "access_id=%s",
+            telegram_id,
+            access_id,
+        )
+        return
+
+    await _render_projection_confirmation(message, materialization)
 
 
 @router.message(
@@ -477,14 +560,15 @@ async def payment_return_deeplink(
         return
 
     try:
-        materialization = await materialize_ready_payment_return(
+        await process_ready_payment_return(
+            message=message,
             telegram_id=telegram_user.id,
             access_id=result["access_id"],
         )
     except InternalApiError as error:
         logger.warning(
-            "Payment return materialization failed: telegram_id=%s access_id=%s "
-            "code=%s status=%s retryable=%s",
+            "Payment return ready material unavailable: telegram_id=%s "
+            "access_id=%s code=%s status=%s retryable=%s",
             telegram_user.id,
             result.get("access_id"),
             error.code,
@@ -497,10 +581,9 @@ async def payment_return_deeplink(
             else payment_return_status_text("support_error")
         )
         await safe_edit_or_send(message, text, force_new=True)
-        return
     except Exception:
         logger.exception(
-            "Unexpected payment return materialization error: telegram_id=%s "
+            "Unexpected payment return ready-material error: telegram_id=%s "
             "access_id=%s",
             telegram_user.id,
             result.get("access_id"),
@@ -510,6 +593,3 @@ async def payment_return_deeplink(
             payment_return_status_text("support_error"),
             force_new=True,
         )
-        return
-
-    await _render_ready_result(message, materialization)
