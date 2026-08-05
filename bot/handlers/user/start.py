@@ -10,6 +10,7 @@ from config import ADMIN_IDS
 from database.requests import get_or_create_user, is_user_banned, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
 from bot.utils.text import escape_html, safe_edit_or_send
 from bot.services.internal_api import schedule_telegram_user_upsert
+from bot.services.runtime_mode import saas_client_mode_enabled
 from bot.services.channel_gate import (
     has_passed_channel_gate,
     mark_channel_gate_passed,
@@ -20,6 +21,22 @@ from bot.services.channel_gate import (
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+_LEGACY_PAYMENT_START_PREFIXES = (
+    "pay_yookassa_",
+    "pay_wata_",
+    "pay_platega_",
+    "pay_cardlink_",
+    "cl_",
+    "bill",
+)
+
+
+def is_legacy_payment_start_arg(value: str | None) -> bool:
+    """Identify only historical provider/billing deep links."""
+    return isinstance(value, str) and value.startswith(
+        _LEGACY_PAYMENT_START_PREFIXES
+    )
 
 
 def _tariff_group_title(name: str) -> str:
@@ -53,6 +70,9 @@ def _format_tariff_line(tariff: dict, enabled_payment_labels: list[str]) -> str:
 
 def _build_tariff_text() -> str:
     """Формирует сгруппированный блок тарифов для плейсхолдера %тарифы%."""
+    if saas_client_mode_enabled():
+        return ""
+
     from database.requests import (
         get_all_tariffs, get_all_groups, get_tariffs_by_group,
         is_crypto_configured, is_stars_enabled,
@@ -125,7 +145,12 @@ async def _render_main_page(target, force_new: bool = False):
     tariff_text = _build_tariff_text()
 
     # Динамическая видимость кнопок
-    show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and (not has_used_trial(user_id))
+    show_trial = (
+        not saas_client_mode_enabled()
+        and is_trial_enabled()
+        and get_trial_tariff_id() is not None
+        and not has_used_trial(user_id)
+    )
     show_referral = is_referral_enabled()
 
     visibility = {
@@ -186,7 +211,19 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         return
 
     args = command.args
-    if args:
+    saas_mode = saas_client_mode_enabled()
+
+    if args and saas_mode and is_legacy_payment_start_arg(args):
+        await state.clear()
+        await safe_edit_or_send(
+            message,
+            "⚠️ <b>Старая платёжная ссылка больше не используется</b>\n\n"
+            "Откройте актуальные тарифы WaveMesh командой /buy.",
+            force_new=True,
+        )
+        return
+
+    if args and not saas_mode:
         try:
             from bot.handlers.user.payments.base import handle_payment_deeplink
             if await handle_payment_deeplink(
@@ -205,7 +242,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             return
     await state.clear()
 
-    if args and args.startswith('bill'):
+    if args and not saas_mode and args.startswith('bill'):
         from bot.services.billing import process_crypto_payment
         from bot.handlers.user.payments.base import finalize_payment_ui
         try:
