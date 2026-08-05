@@ -33,6 +33,34 @@ jobs:
       - name: Apply deterministic patch
         run: python tools/apply_saas_new_access_direct_delivery.py
 
+      - name: Correct generated static assertion
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("tests/test_saas_new_access_delivery.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              "import unittest\n",
+              "import inspect\nimport unittest\n",
+              1,
+          )
+          old = '''        source = saas.__file__
+                  self.assertIsNotNone(source)
+                  text = open(source, encoding="utf-8").read()
+                  start = text.index("async def saas_new_access_check")
+                  end = text.index("async def _load_checkout_context", start)
+                  function_text = text[start:end]
+          '''
+          new = '''        function_text = inspect.getsource(
+                      saas.saas_new_access_check,
+                  )
+          '''
+          if old not in text:
+              raise RuntimeError("generated static assertion anchor not found")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
       - name: Run focused delivery tests
         run: python -m unittest tests.test_saas_new_access_delivery -v
 
