@@ -15,7 +15,8 @@ from datetime import datetime
 from typing import Any
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, InlineKeyboardButton
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.services.internal_api import (
@@ -157,29 +158,43 @@ def _apply_replacement_material(key: dict[str, Any], material: dict[str, Any]) -
     )
 
 
-@router.callback_query(F.data == "buy_key")
-async def saas_new_access_tariffs(callback: CallbackQuery) -> None:
-    """Show SaaS-owned tariffs for a new user access."""
+async def _render_saas_new_access_tariffs(
+    target: Message,
+    telegram_id: int,
+) -> bool:
+    """Render the authoritative SaaS tariff catalog for a Telegram user."""
     try:
         dashboard, tariffs = await internal_api_client.get_telegram_dashboard(
-            callback.from_user.id,
+            telegram_id,
         ), await internal_api_client.list_tariffs()
     except InternalApiError as error:
         logger.warning(
             "SaaS new access catalog failed: telegram_id=%s code=%s status=%s",
-            callback.from_user.id,
+            telegram_id,
             error.code,
             error.status,
         )
-        await callback.answer("Не удалось загрузить тарифы WaveMesh.", show_alert=True)
-        return
+        await safe_edit_or_send(
+            target,
+            "❌ <b>Не удалось загрузить тарифы WaveMesh</b>\n\n"
+            "Попробуйте немного позже.",
+            force_new=True,
+        )
+        return False
+
     user = dashboard.get("user")
     if not isinstance(user, dict) or not user.get("user_id"):
-        await callback.answer("Профиль WaveMesh ещё не готов.", show_alert=True)
-        return
+        await safe_edit_or_send(
+            target,
+            "⏳ <b>Профиль WaveMesh ещё создаётся</b>\n\n"
+            "Повторите команду /buy немного позже.",
+            force_new=True,
+        )
+        return False
 
     available = [
-        item for item in tariffs
+        item
+        for item in tariffs
         if isinstance(item, dict)
         and isinstance(item.get("tariff_id"), str)
         and isinstance(item.get("price_rub"), (int, float))
@@ -189,14 +204,45 @@ async def saas_new_access_tariffs(callback: CallbackQuery) -> None:
     for tariff in available:
         data = f"{_NEW_CHECKOUT_PREFIX}:{tariff['tariff_id']}"
         if len(data.encode("utf-8")) <= 64:
-            builder.row(InlineKeyboardButton(text=_tariff_button_text(tariff), callback_data=data))
+            builder.row(
+                InlineKeyboardButton(
+                    text=_tariff_button_text(tariff),
+                    callback_data=data,
+                )
+            )
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="home"))
     await safe_edit_or_send(
-        callback.message,
-        "💳 <b>Купить новый ключ</b>\n\nВыберите тариф. Оплата и создание доступа выполняются через WaveMesh SaaS.",
+        target,
+        "💳 <b>Купить новый ключ</b>\n\n"
+        "Выберите тариф. Оплата и создание доступа выполняются через WaveMesh SaaS.",
         reply_markup=builder.as_markup(),
+        force_new=True,
     )
-    await callback.answer()
+    return True
+
+
+@router.message(Command("buy"))
+async def saas_buy_command(message: Message) -> None:
+    """Open the authoritative SaaS catalog from the /buy command."""
+    if message.from_user is None:
+        return
+    await _render_saas_new_access_tariffs(
+        message,
+        message.from_user.id,
+    )
+
+
+@router.callback_query(F.data == "buy_key")
+async def saas_new_access_tariffs(callback: CallbackQuery) -> None:
+    """Open the authoritative SaaS catalog from the main-page button."""
+    rendered = await _render_saas_new_access_tariffs(
+        callback.message,
+        callback.from_user.id,
+    )
+    await callback.answer(
+        "" if rendered else "Не удалось загрузить тарифы WaveMesh.",
+        show_alert=not rendered,
+    )
 
 
 @router.callback_query(F.data.startswith(f"{_NEW_CHECKOUT_PREFIX}:"))
