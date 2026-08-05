@@ -5,15 +5,12 @@ from pathlib import Path
 
 helper = Path("tools/apply_direct_subscription_delivery.py")
 source = helper.read_text(encoding="utf-8")
-old = '''    ''' + "'''" + '''    VerifiedReadyPaymentReturn,
-    materialize_ready_payment_return,
-''' + "'''" + ''',
-'''
-new = '''    ''' + "'''" + '''    PaymentReturnMaterialization,
-    VerifiedReadyPaymentReturn,
-    materialize_ready_payment_return,
-''' + "'''" + ''',
-'''
+old = "    '''    VerifiedReadyPaymentReturn,\n    materialize_ready_payment_return,\n"
+new = (
+    "    '''    PaymentReturnMaterialization,\n"
+    "    VerifiedReadyPaymentReturn,\n"
+    "    materialize_ready_payment_return,\n"
+)
 if old not in source:
     raise RuntimeError("test import patch anchor not found")
 corrected = source.replace(old, new, 1)
