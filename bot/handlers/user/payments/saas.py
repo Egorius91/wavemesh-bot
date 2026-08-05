@@ -23,6 +23,7 @@ from bot.services.internal_api import (
     InternalApiError,
     internal_api_client,
 )
+from bot.handlers.user.payments.payment_return import process_ready_payment_return
 from bot.utils.text import escape_html, safe_edit_or_send
 
 logger = logging.getLogger(__name__)
@@ -307,17 +308,24 @@ async def saas_new_access_checkout(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith(f"{_NEW_CHECK_PREFIX}:"))
 async def saas_new_access_check(callback: CallbackQuery) -> None:
+    """Resolve one paid order and use the shared verified delivery workflow."""
     order_id = _parse_single_value_callback(callback.data, _NEW_CHECK_PREFIX)
     if order_id is None:
         await callback.answer("Некорректный заказ.", show_alert=True)
         return
+
     try:
-        dashboard = await internal_api_client.get_telegram_dashboard(callback.from_user.id)
+        dashboard = await internal_api_client.get_telegram_dashboard(
+            callback.from_user.id,
+        )
         accesses = dashboard.get("accesses")
         matches = [
-            item for item in accesses
-            if isinstance(item, dict) and item.get("source_order_id") == order_id
+            item
+            for item in accesses
+            if isinstance(item, dict)
+            and item.get("source_order_id") == order_id
         ] if isinstance(accesses, list) else []
+
         if not matches:
             await callback.answer(
                 "Платёж ещё не подтверждён YooKassa. Попробуйте немного позже.",
@@ -326,86 +334,62 @@ async def saas_new_access_check(callback: CallbackQuery) -> None:
             return
         if len(matches) != 1:
             raise InternalApiError("SaaS returned ambiguous paid access")
+
         access = matches[0]
         if access.get("status") != "ready":
             await callback.answer(
-                "Оплата принята. Entry Node ещё создаёт ключ — проверьте снова через несколько секунд.",
+                "Оплата принята. Entry Node ещё создаёт ключ — "
+                "проверьте снова через несколько секунд.",
                 show_alert=True,
             )
             return
-        material = await internal_api_client.get_access_material(access["access_id"])
-        tariffs = await internal_api_client.list_tariffs()
-        saas_tariff = next(
-            (item for item in tariffs if item.get("tariff_id") == access.get("tariff_id")),
-            None,
-        )
-        if not isinstance(saas_tariff, dict):
-            raise InternalApiError("Paid SaaS tariff is missing")
 
-        from database.requests import get_active_servers, get_all_tariffs, get_user_internal_id
-        from database.db_keys import (
-            create_materialized_vpn_key_from_saas,
-            find_materialized_key_for_user,
-        )
+        access_id = access.get("access_id")
+        if not isinstance(access_id, str) or not access_id:
+            raise InternalApiError("Paid SaaS access has no access_id")
 
-        user_id = get_user_internal_id(callback.from_user.id)
-        servers = get_active_servers()
-        local_tariffs = _resolve_local_projection_tariffs(
-            get_all_tariffs(include_hidden=True),
-            saas_tariff,
-        )
-        if not user_id or len(servers) != 1 or len(local_tariffs) != 1:
-            raise InternalApiError("Local SaaS projection mapping is ambiguous")
-        existing = find_materialized_key_for_user(
-            user_id,
-            material["client_uuid"],
-            material["panel_email"],
-            material["sub_id"],
-        )
-        if existing:
-            key_id = int(existing["id"])
-        else:
-            expires_at = datetime.fromisoformat(
-                str(access["expires_at"]).replace("Z", "+00:00")
-            ).strftime("%Y-%m-%d %H:%M:%S")
-            key_id = create_materialized_vpn_key_from_saas(
-                user_id=user_id,
-                server_id=int(servers[0]["id"]),
-                tariff_id=int(local_tariffs[0]["id"]),
-                panel_inbound_id=material["primary_inbound_id"],
-                panel_email=material["panel_email"],
-                client_uuid=material["client_uuid"],
-                sub_id=material["sub_id"],
-                expires_at=expires_at,
-                traffic_limit=int(access.get("traffic_limit_bytes") or 0),
-            )
-        await internal_api_client.link_access_projection(
-            access_id=access["access_id"],
+        await callback.answer("Проверяем готовый доступ…")
+        await process_ready_payment_return(
+            message=callback.message,
             telegram_id=callback.from_user.id,
-            legacy_key_id=key_id,
-            idempotency_key=f"paid-access-projection-{access['access_id']}-{key_id}",
+            access_id=access_id,
         )
-    except Exception as error:
+    except InternalApiError as error:
         logger.warning(
-            "SaaS paid access projection failed: telegram_id=%s order_id=%s error=%s",
+            "SaaS paid access delivery failed: telegram_id=%s order_id=%s "
+            "code=%s status=%s retryable=%s",
+            callback.from_user.id,
+            order_id,
+            error.code,
+            error.status,
+            error.retryable,
+        )
+        await safe_edit_or_send(
+            callback.message,
+            (
+                "⏳ <b>Оплата получена</b>\n\n"
+                "Готовый доступ пока не удалось получить. "
+                "Не создавайте новый платёж; повторите проверку позже."
+            ),
+            force_new=True,
+        )
+    except Exception as error:  # noqa: BLE001 - Telegram handler boundary
+        logger.exception(
+            "Unexpected SaaS paid access delivery error: telegram_id=%s "
+            "order_id=%s code=%s",
             callback.from_user.id,
             order_id,
             type(error).__name__,
         )
-        await callback.answer(
-            "Оплата получена, но ключ пока не удалось показать. Не создавайте новый платёж; повторите проверку позже.",
-            show_alert=True,
+        await safe_edit_or_send(
+            callback.message,
+            (
+                "⏳ <b>Оплата получена</b>\n\n"
+                "Доступ сохранён в WaveMesh, но его пока не удалось показать. "
+                "Повторите проверку позже."
+            ),
+            force_new=True,
         )
-        return
-
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🔑 Открыть ключ", callback_data=f"key:{key_id}"))
-    await safe_edit_or_send(
-        callback.message,
-        "✅ <b>Новый ключ создан</b>\n\nОплата подтверждена, Entry Node подготовил подписку, ключ добавлен в «Мои ключи».",
-        reply_markup=builder.as_markup(),
-    )
-    await callback.answer()
 
 
 async def _load_checkout_context(
