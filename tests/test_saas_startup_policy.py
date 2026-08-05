@@ -14,6 +14,22 @@ MAIN_PATH = Path("main.py")
 UNIT_PATH = Path("systemd/wavemesh-bot.service")
 
 
+def function_calls(function: ast.AsyncFunctionDef | ast.FunctionDef) -> dict[str, int]:
+    calls: dict[str, int] = {}
+    for node in ast.walk(function):
+        if not isinstance(node, (ast.Call, ast.Await)):
+            continue
+        call = node.value if isinstance(node, ast.Await) else node
+        if not isinstance(call, ast.Call):
+            continue
+        target = call.func
+        if isinstance(target, ast.Name):
+            calls.setdefault(target.id, call.lineno)
+        elif isinstance(target, ast.Attribute):
+            calls.setdefault(target.attr, call.lineno)
+    return calls
+
+
 class SaasStartupPolicyTests(unittest.TestCase):
     def test_saas_mode_fails_when_internal_api_is_not_ready(self) -> None:
         with self.assertRaisesRegex(
@@ -37,9 +53,7 @@ class SaasStartupPolicyTests(unittest.TestCase):
             saas_client_mode=False,
         )
 
-    def test_internal_api_probe_precedes_local_mutations_and_telegram_startup(
-        self,
-    ) -> None:
+    def test_internal_api_probe_precedes_mutations_telegram_and_jobs(self) -> None:
         tree = ast.parse(
             MAIN_PATH.read_text(encoding="utf-8"),
             filename=str(MAIN_PATH),
@@ -50,19 +64,7 @@ class SaasStartupPolicyTests(unittest.TestCase):
             if isinstance(node, ast.AsyncFunctionDef)
             and node.name == "on_startup"
         )
-
-        calls: dict[str, int] = {}
-        for node in ast.walk(startup):
-            if not isinstance(node, (ast.Call, ast.Await)):
-                continue
-            call = node.value if isinstance(node, ast.Await) else node
-            if not isinstance(call, ast.Call):
-                continue
-            function = call.func
-            if isinstance(function, ast.Name):
-                calls.setdefault(function.id, call.lineno)
-            elif isinstance(function, ast.Attribute):
-                calls.setdefault(function.attr, call.lineno)
+        calls = function_calls(startup)
 
         self.assertLess(
             calls["internal_api_startup_probe"],
@@ -76,6 +78,26 @@ class SaasStartupPolicyTests(unittest.TestCase):
             calls["enforce_internal_api_startup"],
             calls["get_me"],
         )
+        self.assertLess(
+            calls["enforce_internal_api_startup"],
+            calls["start_legacy_background_tasks"],
+        )
+
+    def test_polling_setup_does_not_start_background_jobs_early(self) -> None:
+        tree = ast.parse(
+            MAIN_PATH.read_text(encoding="utf-8"),
+            filename=str(MAIN_PATH),
+        )
+        main = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "main"
+        )
+
+        calls = function_calls(main)
+        self.assertNotIn("create_task", calls)
+        self.assertNotIn("start_legacy_background_tasks", calls)
 
     def test_failed_saas_startup_logs_only_a_fixed_blocker_code(self) -> None:
         source = MAIN_PATH.read_text(encoding="utf-8")
