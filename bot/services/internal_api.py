@@ -242,6 +242,7 @@ class WaveMeshInternalApiClient:
         *,
         user_id: str,
         tariff_id: str,
+        billing_mode: str,
         access_id: str | None = None,
         return_url: str | None = None,
         return_channel: str | None = "TELEGRAM",
@@ -265,10 +266,17 @@ class WaveMeshInternalApiClient:
                 code="INTERNAL_API_INVALID_REQUEST",
             )
 
+        normalized_billing_mode = billing_mode.strip().upper()
+        if normalized_billing_mode not in {"ONE_TIME", "RECURRING"}:
+            raise InternalApiError(
+                "Unsupported payment billing mode",
+                code="INTERNAL_API_INVALID_REQUEST",
+            )
+
         payload: dict[str, Any] = {
             "user_id": user_id,
             "tariff_id": tariff_id,
-            "provider": "YOOKASSA",
+            "billing_mode": normalized_billing_mode,
         }
         if access_id:
             payload["access_id"] = access_id

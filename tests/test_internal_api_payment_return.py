@@ -18,6 +18,7 @@ class InternalApiPaymentReturnTests(unittest.IsolatedAsyncioTestCase):
         result = await client.create_order(
             user_id="user-12345678",
             tariff_id="tariff-12345678",
+            billing_mode="ONE_TIME",
             access_id="access-12345678",
             idempotency_key="telegram-checkout-1",
         )
@@ -29,7 +30,7 @@ class InternalApiPaymentReturnTests(unittest.IsolatedAsyncioTestCase):
             json_body={
                 "user_id": "user-12345678",
                 "tariff_id": "tariff-12345678",
-                "provider": "YOOKASSA",
+                "billing_mode": "ONE_TIME",
                 "access_id": "access-12345678",
                 "return_channel": "TELEGRAM",
             },
@@ -49,6 +50,7 @@ class InternalApiPaymentReturnTests(unittest.IsolatedAsyncioTestCase):
         await client.create_order(
             user_id="user-12345678",
             tariff_id="tariff-12345678",
+            billing_mode="ONE_TIME",
             return_url="https://trusted.example.invalid/payment/return",
             return_channel=None,
             idempotency_key="legacy-checkout-1",
@@ -60,7 +62,7 @@ class InternalApiPaymentReturnTests(unittest.IsolatedAsyncioTestCase):
             json_body={
                 "user_id": "user-12345678",
                 "tariff_id": "tariff-12345678",
-                "provider": "YOOKASSA",
+                "billing_mode": "ONE_TIME",
                 "return_url": "https://trusted.example.invalid/payment/return",
             },
             idempotency_key="legacy-checkout-1",
@@ -74,7 +76,22 @@ class InternalApiPaymentReturnTests(unittest.IsolatedAsyncioTestCase):
             await client.create_order(
                 user_id="user-12345678",
                 tariff_id="tariff-12345678",
+                billing_mode="ONE_TIME",
                 return_url="https://trusted.example.invalid/payment/return",
+            )
+
+        self.assertEqual(raised.exception.code, "INTERNAL_API_INVALID_REQUEST")
+        client._request.assert_not_awaited()
+
+    async def test_create_order_rejects_unknown_billing_mode(self):
+        client = WaveMeshInternalApiClient()
+        client._request = AsyncMock()
+
+        with self.assertRaises(InternalApiError) as raised:
+            await client.create_order(
+                user_id="user-12345678",
+                tariff_id="tariff-12345678",
+                billing_mode="UNKNOWN",
             )
 
         self.assertEqual(raised.exception.code, "INTERNAL_API_INVALID_REQUEST")
