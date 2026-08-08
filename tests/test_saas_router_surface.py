@@ -129,6 +129,12 @@ class SaasRouterSurfaceTests(unittest.TestCase):
         self.assertIn("_render_saas_new_access_tariffs", source)
         self.assertNotIn("create_pending_order", source)
 
+    def test_saas_checkout_ui_is_provider_neutral(self) -> None:
+        source = SAAS.read_text(encoding="utf-8")
+        self.assertNotIn("YooKassa", source)
+        self.assertNotIn("Тестовый платёж", source)
+        self.assertIn('billing_mode=billing_mode', source)
+
 
 if __name__ == "__main__":
     unittest.main()

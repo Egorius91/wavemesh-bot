@@ -266,9 +266,13 @@ async def saas_new_access_checkout(callback: CallbackQuery) -> None:
         )
         if not isinstance(user_id, str) or not isinstance(tariff, dict):
             raise InternalApiError("SaaS checkout context is invalid")
+        billing_mode = tariff.get("billing_mode")
+        if billing_mode not in {"ONE_TIME", "RECURRING"}:
+            raise InternalApiError("SaaS tariff billing mode is invalid")
         result = await internal_api_client.create_order(
             user_id=user_id,
             tariff_id=tariff_id,
+            billing_mode=billing_mode,
             access_id=None,
             idempotency_key=(
                 f"telegram-new-access-{callback.from_user.id}-{tariff_id}-{callback.id}"
@@ -282,7 +286,7 @@ async def saas_new_access_checkout(callback: CallbackQuery) -> None:
             error.code,
             error.status,
         )
-        await callback.answer("Не удалось создать тестовый платёж.", show_alert=True)
+        await callback.answer("Не удалось создать оплату.", show_alert=True)
         return
 
     builder = InlineKeyboardBuilder()
@@ -297,9 +301,9 @@ async def saas_new_access_checkout(callback: CallbackQuery) -> None:
     await safe_edit_or_send(
         callback.message,
         (
-            "✅ <b>Тестовый платёж создан</b>\n\n"
+            "✅ <b>Ссылка на оплату готова</b>\n\n"
             f"🎫 {escape_html(str(tariff.get('name') or 'WaveMesh'))}\n\n"
-            "Завершите оплату в YooKassa, вернитесь в бот и нажмите «Проверить оплату»."
+            "Завершите оплату, вернитесь в бот и нажмите «Проверить оплату»."
         ),
         reply_markup=builder.as_markup(),
     )
@@ -328,7 +332,7 @@ async def saas_new_access_check(callback: CallbackQuery) -> None:
 
         if not matches:
             await callback.answer(
-                "Платёж ещё не подтверждён YooKassa. Попробуйте немного позже.",
+                "Платёж ещё не подтверждён. Попробуйте немного позже.",
                 show_alert=True,
             )
             return
@@ -719,6 +723,14 @@ async def saas_create_checkout(callback: CallbackQuery) -> None:
         )
         return
 
+    billing_mode = tariff.get("billing_mode")
+    if billing_mode not in {"ONE_TIME", "RECURRING"}:
+        await callback.answer(
+            "Для выбранного тарифа не указан режим оплаты.",
+            show_alert=True,
+        )
+        return
+
     access_id = saas_context["access"].get("access_id")
     await callback.answer("Создаём безопасную ссылку на оплату…")
 
@@ -726,6 +738,7 @@ async def saas_create_checkout(callback: CallbackQuery) -> None:
         result = await internal_api_client.create_order(
             user_id=saas_context["user_id"],
             tariff_id=tariff_id,
+            billing_mode=billing_mode,
             access_id=access_id,
             idempotency_key=(
                 f"telegram-renew-{callback.from_user.id}-{key_id}-"
