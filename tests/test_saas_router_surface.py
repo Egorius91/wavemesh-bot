@@ -49,7 +49,7 @@ class SaasRouterSurfaceTests(unittest.TestCase):
         branch = first_mode_if(PAYMENTS_INIT)
         self.assertEqual(
             imports_in(branch.body),
-            {"payment_return", "saas"},
+            {"payment_return", "provider_billing", "saas"},
         )
         legacy_imports = imports_in(branch.orelse)
         self.assertTrue(

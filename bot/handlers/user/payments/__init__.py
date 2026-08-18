@@ -7,12 +7,15 @@ router = Router()
 
 if saas_client_mode_enabled():
     # The authoritative SaaS surface owns checkout, renewals, replacements,
-    # and exact opaque payment-return deep links. Legacy provider modules are
-    # deliberately not imported in this runtime mode.
+    # provider-managed billing cancellation, and exact opaque payment-return
+    # deep links. Legacy provider modules are deliberately not imported in
+    # this runtime mode.
     from .payment_return import router as payment_return_router
+    from .provider_billing import router as provider_billing_router
     from .saas import router as saas_router
 
     router.include_router(payment_return_router)
+    router.include_router(provider_billing_router)
     router.include_router(saas_router)
 else:
     from .base import router as base_router
