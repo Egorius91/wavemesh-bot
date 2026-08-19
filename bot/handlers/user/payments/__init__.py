@@ -13,9 +13,11 @@ if saas_client_mode_enabled():
     from .payment_return import router as payment_return_router
     from .provider_billing import router as provider_billing_router
     from .saas import router as saas_router
+    from .provider_routing import router as provider_routing_router
 
     router.include_router(payment_return_router)
     router.include_router(provider_billing_router)
+    router.include_router(provider_routing_router)
     router.include_router(saas_router)
 else:
     from .base import router as base_router
