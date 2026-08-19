@@ -8,6 +8,7 @@ explicit user choice and are revalidated immediately before order creation.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 from typing import Any
 
@@ -90,7 +91,7 @@ def _billing_mode(tariff: dict[str, Any]) -> str | None:
 
 def _provider_keyboard(
     providers: list[str],
-    callback_data: callable,
+    callback_data: Callable[[str], str],
     *,
     back_text: str,
     back_callback: str,
@@ -133,14 +134,15 @@ async def _load_new_context(
         tariffs = await internal_api_client.list_tariffs()
     except InternalApiError as error:
         logger.warning(
-            "SaaS new checkout context failed: telegram_id=%s tariff_id=%s "
-            "code=%s status=%s",
-            callback.from_user.id,
-            tariff_id,
+            "SaaS new checkout context failed: code=%s status=%s retryable=%s",
             error.code,
             error.status,
+            error.retryable,
         )
-        await callback.answer("Не удалось проверить тариф. Попробуйте позже.", show_alert=True)
+        await callback.answer(
+            "Не удалось проверить тариф. Попробуйте позже.",
+            show_alert=True,
+        )
         return None
 
     user = dashboard.get("user") if isinstance(dashboard, dict) else None
@@ -167,15 +169,15 @@ async def _load_renew_context(
         tariffs = await internal_api_client.list_tariffs()
     except InternalApiError as error:
         logger.warning(
-            "SaaS renewal provider routing tariff lookup failed: "
-            "telegram_id=%s key_id=%s tariff_id=%s code=%s status=%s",
-            callback.from_user.id,
-            key_id,
-            tariff_id,
+            "SaaS renewal tariff lookup failed: code=%s status=%s retryable=%s",
             error.code,
             error.status,
+            error.retryable,
         )
-        await callback.answer("Не удалось проверить тариф. Попробуйте позже.", show_alert=True)
+        await callback.answer(
+            "Не удалось проверить тариф. Попробуйте позже.",
+            show_alert=True,
+        )
         return None
 
     tariff = _find_tariff(tariffs, tariff_id)
@@ -187,7 +189,10 @@ async def _load_renew_context(
         or not isinstance(access_id, str)
         or not access_id
     ):
-        await callback.answer("Выбранный тариф или доступ больше недоступен.", show_alert=True)
+        await callback.answer(
+            "Выбранный тариф или доступ больше недоступен.",
+            show_alert=True,
+        )
         return None
     return key, tariff, billing_mode, access_id
 
@@ -200,9 +205,8 @@ async def _load_provider_names(
         options = await internal_api_client.list_payment_providers(billing_mode)
     except InternalApiError as error:
         logger.warning(
-            "SaaS payment provider catalog failed: telegram_id=%s billing_mode=%s "
-            "code=%s status=%s retryable=%s",
-            callback.from_user.id,
+            "SaaS payment provider catalog failed: billing_mode=%s code=%s "
+            "status=%s retryable=%s",
             billing_mode,
             error.code,
             error.status,
@@ -222,6 +226,26 @@ async def _load_provider_names(
         )
         return None
     return providers
+
+
+def _renew_error_message(error: InternalApiError) -> str:
+    if error.code == "COMMERCIAL_CUTOVER_DISABLED":
+        return (
+            "Новый платёжный контур уже подключён в боте, но коммерческий "
+            "gate на сервере WaveMesh пока выключен."
+        )
+    if error.code == "ACCESS_BILLING_TARGET_NOT_READY":
+        return (
+            "Ключ сопоставлен с новым кабинетом, но его платёжный доступ ещё "
+            "не материализован в SaaS. Оплата не создана."
+        )
+    if error.code in {
+        "PAYMENT_PROVIDER_DISABLED",
+        "PAYMENT_PROVIDER_NOT_CONFIGURED",
+        "PAYMENT_PROVIDER_UNAVAILABLE",
+    }:
+        return "Выбранный способ оплаты сейчас недоступен. Оплата не создана."
+    return str(error) or "Не удалось создать платёж. Попробуйте позже."
 
 
 async def _create_new_order(
@@ -247,10 +271,8 @@ async def _create_new_order(
         )
     except InternalApiError as error:
         logger.warning(
-            "SaaS new access checkout failed: telegram_id=%s tariff_id=%s "
-            "provider=%s code=%s status=%s retryable=%s",
-            callback.from_user.id,
-            tariff_id,
+            "SaaS new access checkout failed: provider=%s code=%s status=%s "
+            "retryable=%s",
             provider or "DEFAULT",
             error.code,
             error.status,
@@ -303,10 +325,22 @@ async def _create_renew_order(
 ) -> None:
     tariff_id = str(tariff["tariff_id"])
     await callback.answer("Создаём безопасную ссылку на оплату…")
-    context = await saas._load_checkout_context(callback, key_id)
-    if context is None:
+
+    current_context = await saas._load_checkout_context(callback, key_id)
+    if current_context is None:
         return
-    _, saas_context, _ = context
+    current_key, saas_context, _ = current_context
+    current_access_id = saas_context["access"].get("access_id")
+    if current_access_id != access_id:
+        await safe_edit_or_send(
+            callback.message,
+            (
+                "⏳ <b>Данные ключа изменились</b>\n\n"
+                "Вернитесь к ключу и заново выберите тариф. Оплата не создана."
+            ),
+            force_new=True,
+        )
+        return
 
     try:
         result = await internal_api_client.create_order(
@@ -322,38 +356,19 @@ async def _create_renew_order(
         )
     except InternalApiError as error:
         logger.warning(
-            "SaaS checkout creation failed: telegram_id=%s key_id=%s "
-            "access_id=%s tariff_id=%s provider=%s code=%s status=%s retryable=%s",
-            callback.from_user.id,
-            key_id,
-            access_id,
-            tariff_id,
+            "SaaS renewal checkout failed: provider=%s code=%s status=%s "
+            "retryable=%s",
             provider or "DEFAULT",
             error.code,
             error.status,
             error.retryable,
         )
-        if error.code == "COMMERCIAL_CUTOVER_DISABLED":
-            message = (
-                "Новый платёжный контур уже подключён в боте, но коммерческий "
-                "gate на сервере WaveMesh пока выключен."
-            )
-        elif error.code == "ACCESS_BILLING_TARGET_NOT_READY":
-            message = (
-                "Ключ сопоставлен с новым кабинетом, но его платёжный доступ ещё "
-                "не материализован в SaaS. Оплата не создана."
-            )
-        elif error.code in {
-            "PAYMENT_PROVIDER_DISABLED",
-            "PAYMENT_PROVIDER_NOT_CONFIGURED",
-            "PAYMENT_PROVIDER_UNAVAILABLE",
-        }:
-            message = "Выбранный способ оплаты сейчас недоступен. Оплата не создана."
-        else:
-            message = str(error) or "Не удалось создать платёж. Попробуйте позже."
         await safe_edit_or_send(
             callback.message,
-            f"❌ <b>Не удалось создать оплату</b>\n\n{escape_html(message)}",
+            (
+                "❌ <b>Не удалось создать оплату</b>\n\n"
+                f"{escape_html(_renew_error_message(error))}"
+            ),
             reply_markup=(
                 InlineKeyboardBuilder()
                 .row(
@@ -380,16 +395,6 @@ async def _create_renew_order(
             callback_data=f"key:{key_id}",
         )
     )
-    logger.info(
-        "SaaS checkout created: telegram_id=%s key_id=%s access_id=%s "
-        "tariff_id=%s provider=%s order_id=%s",
-        callback.from_user.id,
-        key_id,
-        access_id,
-        tariff_id,
-        provider or "DEFAULT",
-        result["order_id"],
-    )
     provider_line = (
         f"💳 Способ оплаты: <b>{escape_html(_provider_label(provider))}</b>\n"
         if provider
@@ -399,7 +404,7 @@ async def _create_renew_order(
         callback.message,
         (
             "✅ <b>Ссылка на оплату готова</b>\n\n"
-            f"🔑 Ключ: <b>{escape_html(key.get('display_name') or 'VPN-ключ')}</b>\n"
+            f"🔑 Ключ: <b>{escape_html(current_key.get('display_name') or key.get('display_name') or 'VPN-ключ')}</b>\n"
             f"🎫 Тариф: <b>{escape_html(str(tariff.get('name') or 'WaveMesh'))}</b>\n"
             f"{provider_line}\n"
             "Нажмите кнопку ниже. После подтверждения платежа будет продлён "
