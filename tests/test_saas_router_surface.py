@@ -9,6 +9,7 @@ PAYMENTS_INIT = Path("bot/handlers/user/payments/__init__.py")
 USER_INIT = Path("bot/handlers/user/__init__.py")
 START = Path("bot/handlers/user/start.py")
 SAAS = Path("bot/handlers/user/payments/saas.py")
+PROVIDER_ROUTING = Path("bot/handlers/user/payments/provider_routing.py")
 
 
 def imports_in(nodes: list[ast.stmt]) -> set[str]:
@@ -44,12 +45,28 @@ def first_mode_if(path: Path, *, negated: bool = False) -> ast.If:
     raise AssertionError(f"runtime-mode branch not found in {path}")
 
 
+def included_routers(nodes: list[ast.stmt]) -> list[str]:
+    result: list[str] = []
+    for node in nodes:
+        if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+            continue
+        call = node.value
+        if (
+            isinstance(call.func, ast.Attribute)
+            and call.func.attr == "include_router"
+            and call.args
+            and isinstance(call.args[0], ast.Name)
+        ):
+            result.append(call.args[0].id)
+    return result
+
+
 class SaasRouterSurfaceTests(unittest.TestCase):
     def test_saas_payment_branch_imports_only_authoritative_routers(self) -> None:
         branch = first_mode_if(PAYMENTS_INIT)
         self.assertEqual(
             imports_in(branch.body),
-            {"payment_return", "provider_billing", "saas"},
+            {"payment_return", "provider_billing", "provider_routing", "saas"},
         )
         legacy_imports = imports_in(branch.orelse)
         self.assertTrue(
@@ -65,6 +82,16 @@ class SaasRouterSurfaceTests(unittest.TestCase):
                 "keys_config",
                 "demo",
             }.issubset(legacy_imports)
+        )
+
+    def test_provider_routing_precedes_existing_saas_checkout_router(self) -> None:
+        branch = first_mode_if(PAYMENTS_INIT)
+        order = included_routers(branch.body)
+        self.assertIn("provider_routing_router", order)
+        self.assertIn("saas_router", order)
+        self.assertLess(
+            order.index("provider_routing_router"),
+            order.index("saas_router"),
         )
 
     def test_trial_and_tariff_routers_exist_only_in_legacy_branch(self) -> None:
@@ -133,7 +160,16 @@ class SaasRouterSurfaceTests(unittest.TestCase):
         source = SAAS.read_text(encoding="utf-8")
         self.assertNotIn("YooKassa", source)
         self.assertNotIn("Тестовый платёж", source)
-        self.assertIn('billing_mode=billing_mode', source)
+        self.assertIn("billing_mode=billing_mode", source)
+
+    def test_provider_router_is_explicit_selection_only(self) -> None:
+        source = PROVIDER_ROUTING.read_text(encoding="utf-8")
+        self.assertIn('"yk": "YOOKASSA"', source)
+        self.assertIn('"pg": "PLATEGA"', source)
+        self.assertIn("provider=provider", source)
+        self.assertIn("provider=None", source)
+        self.assertIn("list_payment_providers", source)
+        self.assertNotIn("create_pending_order", source)
 
 
 if __name__ == "__main__":
