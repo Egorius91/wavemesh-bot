@@ -23,6 +23,8 @@ _PAYMENT_RETURN_STATUSES = frozenset(
         "support_error",
     }
 )
+_PAYMENT_PROVIDERS = frozenset({"YOOKASSA", "PLATEGA"})
+_PAYMENT_PROVIDER_ROLES = frozenset({"DEFAULT", "CHOICE"})
 
 
 class InternalApiError(RuntimeError):
@@ -186,6 +188,51 @@ class WaveMeshInternalApiClient:
             )
         return payload
 
+    async def list_payment_providers(
+        self,
+        billing_mode: str,
+    ) -> list[dict[str, str]]:
+        normalized_billing_mode = billing_mode.strip().upper()
+        if normalized_billing_mode not in {"ONE_TIME", "RECURRING"}:
+            raise InternalApiError(
+                "Unsupported payment billing mode",
+                code="INTERNAL_API_INVALID_REQUEST",
+            )
+
+        payload = await self._request(
+            "GET",
+            f"catalog/payment-providers?billing_mode={normalized_billing_mode}",
+        )
+        if not isinstance(payload, list):
+            raise InternalApiError(
+                "Unexpected payment provider catalog response",
+                code="INTERNAL_API_INVALID_RESPONSE",
+            )
+
+        providers: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in payload:
+            if not isinstance(item, dict):
+                raise InternalApiError(
+                    "Unexpected payment provider catalog response",
+                    code="INTERNAL_API_INVALID_RESPONSE",
+                )
+            provider = item.get("provider")
+            role = item.get("role")
+            if (
+                provider not in _PAYMENT_PROVIDERS
+                or role not in _PAYMENT_PROVIDER_ROLES
+                or provider in seen
+            ):
+                raise InternalApiError(
+                    "Unexpected payment provider catalog response",
+                    code="INTERNAL_API_INVALID_RESPONSE",
+                )
+            seen.add(provider)
+            providers.append({"provider": str(provider), "role": str(role)})
+
+        return providers
+
     async def upsert_telegram_user(
         self,
         *,
@@ -243,6 +290,7 @@ class WaveMeshInternalApiClient:
         user_id: str,
         tariff_id: str,
         billing_mode: str,
+        provider: str | None = None,
         access_id: str | None = None,
         return_url: str | None = None,
         return_channel: str | None = "TELEGRAM",
@@ -273,11 +321,24 @@ class WaveMeshInternalApiClient:
                 code="INTERNAL_API_INVALID_REQUEST",
             )
 
+        normalized_provider = (
+            provider.strip().upper()
+            if isinstance(provider, str)
+            else None
+        )
+        if normalized_provider not in {None, "YOOKASSA", "PLATEGA"}:
+            raise InternalApiError(
+                "Unsupported payment provider",
+                code="INTERNAL_API_INVALID_REQUEST",
+            )
+
         payload: dict[str, Any] = {
             "user_id": user_id,
             "tariff_id": tariff_id,
             "billing_mode": normalized_billing_mode,
         }
+        if normalized_provider:
+            payload["provider"] = normalized_provider
         if access_id:
             payload["access_id"] = access_id
         if return_url:
