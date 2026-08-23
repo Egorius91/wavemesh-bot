@@ -162,13 +162,16 @@ class SaasRouterSurfaceTests(unittest.TestCase):
         self.assertNotIn("Тестовый платёж", source)
         self.assertIn("billing_mode=billing_mode", source)
 
-    def test_provider_router_is_explicit_selection_only(self) -> None:
+    def test_provider_router_automates_one_time_and_preserves_recurring_selection(self) -> None:
         source = PROVIDER_ROUTING.read_text(encoding="utf-8")
-        self.assertIn('"yk": "YOOKASSA"', source)
-        self.assertIn('"pg": "PLATEGA"', source)
-        self.assertIn("provider=provider", source)
+        self.assertIn('if billing_mode == "ONE_TIME":', source)
         self.assertIn("provider=None", source)
+        self.assertIn("provider=provider", source)
         self.assertIn("list_payment_providers", source)
+        self.assertIn(
+            "Для разовой оплаты платёжный сервис выбирается автоматически.",
+            source,
+        )
         self.assertNotIn("create_pending_order", source)
 
 
