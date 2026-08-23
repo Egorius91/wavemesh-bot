@@ -1,9 +1,9 @@
-"""Explicit payment-provider selection for the authoritative SaaS checkout flow.
+"""Payment-provider routing for the authoritative SaaS checkout flow.
 
-This router is registered before the existing SaaS checkout router. It only
-intercepts tariff checkout callbacks. A single selectable provider preserves
-the existing provider-omitted DEFAULT route; multiple providers require an
-explicit user choice and are revalidated immediately before order creation.
+This router is registered before the existing SaaS checkout router. ONE_TIME
+checkout always delegates provider choice to WaveMesh by omitting the provider.
+RECURRING keeps explicit provider selection when multiple providers are
+selectable because automatic safe fallback is not yet proven for that mode.
 """
 
 from __future__ import annotations
@@ -244,7 +244,7 @@ def _renew_error_message(error: InternalApiError) -> str:
         "PAYMENT_PROVIDER_NOT_CONFIGURED",
         "PAYMENT_PROVIDER_UNAVAILABLE",
     }:
-        return "Выбранный способ оплаты сейчас недоступен. Оплата не создана."
+        return "Платёжный сервис сейчас недоступен. Оплата не создана."
     return str(error) or "Не удалось создать платёж. Попробуйте позже."
 
 
@@ -428,6 +428,17 @@ async def route_new_checkout(callback: CallbackQuery) -> None:
     if context is None:
         return
     user_id, tariff, billing_mode = context
+
+    if billing_mode == "ONE_TIME":
+        await _create_new_order(
+            callback,
+            user_id=user_id,
+            tariff=tariff,
+            billing_mode=billing_mode,
+            provider=None,
+        )
+        return
+
     providers = await _load_provider_names(callback, billing_mode)
     if providers is None:
         return
@@ -470,6 +481,13 @@ async def create_new_checkout_with_provider(callback: CallbackQuery) -> None:
     if context is None:
         return
     user_id, tariff, billing_mode = context
+    if billing_mode == "ONE_TIME":
+        await callback.answer(
+            "Для разовой оплаты платёжный сервис выбирается автоматически.",
+            show_alert=True,
+        )
+        return
+
     providers = await _load_provider_names(callback, billing_mode)
     if providers is None:
         return
@@ -501,6 +519,19 @@ async def route_renew_checkout(callback: CallbackQuery) -> None:
     if context is None:
         return
     key, tariff, billing_mode, access_id = context
+
+    if billing_mode == "ONE_TIME":
+        await _create_renew_order(
+            callback,
+            key_id=key_id,
+            key=key,
+            tariff=tariff,
+            billing_mode=billing_mode,
+            access_id=access_id,
+            provider=None,
+        )
+        return
+
     providers = await _load_provider_names(callback, billing_mode)
     if providers is None:
         return
@@ -546,6 +577,13 @@ async def create_renew_checkout_with_provider(callback: CallbackQuery) -> None:
     if context is None:
         return
     key, tariff, billing_mode, access_id = context
+    if billing_mode == "ONE_TIME":
+        await callback.answer(
+            "Для разовой оплаты платёжный сервис выбирается автоматически.",
+            show_alert=True,
+        )
+        return
+
     providers = await _load_provider_names(callback, billing_mode)
     if providers is None:
         return
