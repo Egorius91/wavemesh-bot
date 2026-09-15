@@ -563,6 +563,25 @@ class WaveMeshInternalApiClient:
             )
         return result
 
+    async def get_access_provisioning(self, idempotency_key: str) -> dict[str, Any]:
+        if not isinstance(idempotency_key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,200}", idempotency_key):
+            raise InternalApiError("Invalid provisioning request identity", code="INTERNAL_API_INVALID_RESPONSE")
+        result = await self._request("GET", "bot/access-provisioning", idempotency_key=idempotency_key)
+        valid = (isinstance(result, dict) and result.get("submission") in ("OBSERVED", "UNCONFIRMED")
+                 and result.get("can_retry_create") is False and isinstance(result.get("status"), str))
+        if valid and result["submission"] == "OBSERVED":
+            valid = all(isinstance(result.get(k), str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result[k]) for k in
+                        ("access_id", "command_id", "assigned_entry_node_id"))
+            valid = valid and isinstance(result.get("legacy_key_id"), str) and result["legacy_key_id"].isdigit()
+            try:
+                valid = valid and datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00")).tzinfo is not None
+            except (KeyError, AttributeError, TypeError, ValueError):
+                valid = False
+        if not valid:
+            raise InternalApiError("Invalid provisioning readback", code="INTERNAL_API_INVALID_RESPONSE")
+        return {k: result.get(k) for k in ("submission", "status", "access_id", "command_id",
+                "assigned_entry_node_id", "legacy_key_id", "expires_at", "can_retry_create")}
+
     async def get_access_material(self, access_id: str) -> dict[str, Any]:
         result = await self._request(
             "GET",
