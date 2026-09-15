@@ -19,18 +19,19 @@ def callback(admin=9, chat=9, kind="private"):
 class AdapterTests(IsolatedAsyncioTestCase):
     async def test_readback_is_get_with_original_key_and_strips_unknown_fields(self):
         client = WaveMeshInternalApiClient()
+        request_identity = "fixture0000000000"
         result = {"submission": "OBSERVED", "status": "READY", "access_id": "access-1",
                   "command_id": "command-1", "assigned_entry_node_id": "node-1", "legacy_key_id": "1",
                   "expires_at": "2026-10-01T00:00:00Z", "can_retry_create": False, "secret": "not forwarded"}
         with patch.object(client, "_request", AsyncMock(return_value=result)) as request:
-            observed = await client.get_access_provisioning("admin-grant-0000000000000000")
-            request.assert_awaited_once_with("GET", "bot/access-provisioning", idempotency_key="admin-grant-0000000000000000")
+            observed = await client.get_access_provisioning(request_identity)
+            request.assert_awaited_once_with("GET", "bot/access-provisioning", idempotency_key=request_identity)
             self.assertNotIn("secret", observed)
         for invalid in (None, {}, {**result, "submission": []}, {**result, "can_retry_create": True},
                         {**result, "expires_at": "2026-10-01"}, {**result, "access_id": "../foreign"}):
             with self.subTest(invalid=invalid), patch.object(client, "_request", AsyncMock(return_value=invalid)):
                 with self.assertRaises(InternalApiError):
-                    await client.get_access_provisioning("admin-grant-0000000000000000")
+                    await client.get_access_provisioning(request_identity)
 
     async def test_unauthorized_or_nonprivate_confirmation_never_opens_journal(self):
         for admin, chat, kind in ((8,8,"private"), (9,10,"private"), (9,-1,"group")):

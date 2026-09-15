@@ -1,3 +1,5 @@
 # Historical test-only idempotency key "admin-grant-fixture-1" (not a credential).
 # Exact finding only; current and future secrets remain scanned.
 f097d1e97dd288a90d5d7a22e2ad12cd593ff9e4:tests/test_admin_provisioning_adapter.py:generic-api-key:27
+# The replacement fixed idempotency string was also classified as a credential.
+88f233aebcb63a1d98edc6dd4d70befd540005c9:tests/test_admin_provisioning_adapter.py:generic-api-key:27
