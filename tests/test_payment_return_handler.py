@@ -1,4 +1,6 @@
 import unittest
+from datetime import datetime, timezone
+from aiogram.types import Chat, Message
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -249,10 +251,15 @@ class PaymentReturnMaterializationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_binding(first.key_id)["node_id"],"node-1")
 
 
+def private_message():
+    return Message(message_id=1, date=datetime.now(timezone.utc), chat=Chat(id=TELEGRAM_ID,type="private"))
+
+
 class PaymentReturnDirectDeliveryTests(unittest.IsolatedAsyncioTestCase):
     def verified(self):
         return VerifiedReadyPaymentReturn(
             access_id=ACCESS_ID,
+            telegram_id=TELEGRAM_ID,
             subscription_url=ready_material()["subscription_url"],
             access=ready_access(),
             material=ready_material(),
@@ -260,7 +267,7 @@ class PaymentReturnDirectDeliveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_authoritative_url_is_rendered_before_local_projection(self):
         events = []
-        message = MagicMock()
+        message = private_message()
         verified = self.verified()
         projection = PaymentReturnMaterialization(
             key_id=55,
@@ -343,7 +350,7 @@ class PaymentReturnDirectDeliveryTests(unittest.IsolatedAsyncioTestCase):
             ) as confirmation_mock,
         ):
             await process_ready_payment_return(
-                message=MagicMock(),
+                message=private_message(),
                 telegram_id=TELEGRAM_ID,
                 access_id=ACCESS_ID,
             )
@@ -377,7 +384,7 @@ class PaymentReturnDirectDeliveryTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             await process_ready_payment_return(
-                message=MagicMock(),
+                message=private_message(),
                 telegram_id=TELEGRAM_ID,
                 access_id=ACCESS_ID,
             )
@@ -404,7 +411,7 @@ class PaymentReturnDirectDeliveryTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             await process_ready_payment_return(
-                message=MagicMock(),
+                message=private_message(),
                 telegram_id=TELEGRAM_ID,
                 access_id=ACCESS_ID,
             )
@@ -418,7 +425,7 @@ class PaymentReturnDirectDeliveryTests(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(),
         ) as render_page:
             await payment_return._render_verified_subscription(
-                MagicMock(),
+                private_message(),
                 verified,
             )
 

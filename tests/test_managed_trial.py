@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from aiogram.types import Chat, Message, User
+from aiogram.types import CallbackQuery, Chat, Message, User
 from bot.handlers.user import managed_trial as trial
 from bot.handlers.user.payments import payment_return
 from bot.services.internal_api import InternalApiError, WaveMeshInternalApiClient
@@ -75,13 +74,14 @@ class TrialHandlerTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.client.activate_trial.await_count, 1)
 
     async def test_duplicate_callbacks_do_not_mint_a_new_operation_identity(self):
-        callback = SimpleNamespace(message=message(), from_user=SimpleNamespace(id=123),
-                                   data="trial_activate", answer=AsyncMock())
-        await asyncio.gather(trial.trial_callback(callback), trial.trial_callback(callback))
-        self.assertEqual(self.client.activate_trial.await_count, 2)
-        for call in self.client.activate_trial.await_args_list:
-            self.assertEqual(call.args, ("canonical-user",))
-        self.assertEqual(callback.answer.await_count, 2)
+        callback = CallbackQuery(id="fixture",chat_instance="fixture",message=message(),
+                                 from_user=User(id=123,is_bot=False,first_name="Fixture"),data="trial_activate")
+        with patch.object(CallbackQuery,"answer",AsyncMock()) as answer:
+            await asyncio.gather(trial.trial_callback(callback), trial.trial_callback(callback))
+            self.assertEqual(self.client.activate_trial.await_count, 2)
+            for call in self.client.activate_trial.await_args_list:
+                self.assertEqual(call.args, ("canonical-user",))
+            self.assertEqual(answer.await_count, 2)
 
     async def test_menu_visibility_ignores_local_trial_usage_in_saas_mode(self):
         from bot.handlers.user import start

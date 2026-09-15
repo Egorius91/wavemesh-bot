@@ -232,6 +232,9 @@ async def main():
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
+    from bot.middlewares.private_commercial import install_private_commercial_boundary
+    install_private_commercial_boundary(dp)
+
     from bot.middlewares.bot_blocked import BotBlockedResetMiddleware
     from bot.middlewares.internal_api_shadow import InternalApiDashboardShadowMiddleware
 

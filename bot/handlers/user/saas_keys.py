@@ -5,15 +5,13 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from bot.services.internal_api import InternalApiError, internal_api_client
 from bot.utils.text import escape_html, safe_edit_or_send
 from database.saas_access_projection import identity
+from bot.services.private_chat import private_message_for
 
 router = Router()
 
 
 def private_message(target, telegram_id):
-    message = getattr(target, "message", None) or target
-    if message.chat.type != "private" or message.chat.id != telegram_id:
-        return None
-    return message
+    return private_message_for(target, telegram_id)
 
 
 async def dashboard(telegram_id):

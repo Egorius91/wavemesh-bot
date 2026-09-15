@@ -21,6 +21,7 @@ from bot.services.internal_api import (
     schedule_telegram_user_upsert,
 )
 from bot.utils.text import safe_edit_or_send
+from bot.services.private_chat import private_actor_id, private_message_for
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class PaymentReturnMaterialization:
 @dataclass(frozen=True)
 class VerifiedReadyPaymentReturn:
     access_id: str
+    telegram_id: int
     subscription_url: str = field(repr=False)
     access: dict[str, Any] = field(repr=False)
     material: dict[str, Any] = field(repr=False)
@@ -233,6 +235,7 @@ async def load_verified_ready_payment_return(
 
     return VerifiedReadyPaymentReturn(
         access_id=access_id,
+        telegram_id=telegram_id,
         subscription_url=str(material["subscription_url"]),
         access=access,
         material=material,
@@ -253,7 +256,7 @@ async def materialize_ready_payment_return(
             telegram_id=telegram_id,
             access_id=access_id,
         )
-        if resolved.access_id != access_id:
+        if resolved.access_id != access_id or resolved.telegram_id != telegram_id:
             raise InternalApiError(
                 "Verified payment access does not match the requested access",
                 code="INTERNAL_API_INVALID_RESPONSE",
@@ -343,6 +346,8 @@ async def _render_verified_subscription(
     verified: VerifiedReadyPaymentReturn,
 ) -> None:
     """Deliver the authoritative SaaS URL before any local projection work."""
+    if private_message_for(message, verified.telegram_id) is None:
+        raise InternalApiError("Private owner chat required", code="PRIVATE_CHAT_REQUIRED", status=403)
     from bot.utils.key_sender_core import render_key_delivery_page
 
     await render_key_delivery_page(
@@ -389,6 +394,8 @@ async def process_ready_payment_return(
     access_id: str,
 ) -> None:
     """Deliver verified SaaS material, then best-effort the legacy projection."""
+    if private_message_for(message, telegram_id) is None:
+        raise InternalApiError("Private owner chat required", code="PRIVATE_CHAT_REQUIRED", status=403)
     verified = await load_verified_ready_payment_return(
         telegram_id=telegram_id,
         access_id=access_id,
@@ -435,6 +442,8 @@ async def payment_return_deeplink(
     command: CommandObject,
 ) -> None:
     """Resolve one opaque payment-return token and project only verified state."""
+    if private_actor_id(message) is None:
+        return
     telegram_user = message.from_user
     if telegram_user is None:
         return

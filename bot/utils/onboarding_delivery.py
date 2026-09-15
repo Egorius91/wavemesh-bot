@@ -54,10 +54,10 @@ async def send_onboarding_connection(
     from bot.utils.page_renderer import build_page_keyboard
     from bot.utils.text import safe_edit_or_send
     from bot.services.runtime_mode import saas_client_mode_enabled
+    from bot.services.private_chat import private_actor_id
 
-    if saas_client_mode_enabled() and (callback.message.chat.type != "private"
-            or callback.message.chat.id != callback.from_user.id
-            or key.get("telegram_id") != callback.from_user.id):
+    if saas_client_mode_enabled() and (private_actor_id(callback) is None
+            or key.get("telegram_id") != private_actor_id(callback)):
         return False
 
     try:
