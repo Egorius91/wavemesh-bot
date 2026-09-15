@@ -71,7 +71,9 @@ class ProvisioningWorker:
             if row["phase"] in {"SUBMIT_DISPATCHED", "OBSERVED"}:
                 result = await self.client.get_access_provisioning(row["request_key"])
                 if result["submission"] != "OBSERVED":
-                    self.journal.release(row, status="TIMEOUT" if result["status"] == "TIMEOUT" else "MANUAL_REVIEW",
+                    pending = result["status"] == "PENDING" and self.journal.clock() - row["created_at"] < 900
+                    status = "PENDING" if pending else ("TIMEOUT" if result["status"] in {"TIMEOUT", "PENDING"} else "MANUAL_REVIEW")
+                    self.journal.release(row, status=status,
                                          error="SUBMISSION_UNCONFIRMED")
                     return self.journal.get(operation_id)
                 if result["legacy_key_id"] != str(row["key_id"]):

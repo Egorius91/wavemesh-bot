@@ -173,6 +173,25 @@ class JournalTests(IsolatedAsyncioTestCase):
         await worker.reconcile(row["id"], explicit=True)
         self.assertEqual(self.client.calls, [])
 
+    async def test_processing_readback_keeps_polling_until_late_commit_is_visible(self):
+        row = self.prepare()
+        self.client.lose = "create"
+        worker = ProvisioningWorker(self.client, self.journal)
+        await worker.reconcile(row["id"])
+        original = self.client.get_access_provisioning
+        async def processing(key):
+            return {"submission":"UNCONFIRMED", "status":"PENDING", "can_retry_create":False}
+        self.client.get_access_provisioning = processing
+        self.now += 16
+        result = await worker.reconcile(row["id"])
+        self.assertEqual(result["status"], "PENDING")
+        self.assertEqual(result["phase"], "SUBMIT_DISPATCHED")
+        self.client.get_access_provisioning = original
+        self.now += 16
+        await ProvisioningWorker(self.client, self.journal).run_once()
+        self.assertEqual(self.journal.get(row["id"])["status"], "DONE")
+        self.assertEqual(sum(a=="create" for a, _ in self.client.calls), 1)
+
     async def test_deletion_does_not_erase_intent_or_resurrect_projection(self):
         row = self.prepare()
         self.client.lose = "create"
