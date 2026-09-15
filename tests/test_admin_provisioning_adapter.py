@@ -17,6 +17,40 @@ def callback(admin=9, chat=9, kind="private"):
 
 
 class AdapterTests(IsolatedAsyncioTestCase):
+    async def test_catalog_rejects_foreign_duplicate_or_unsafe_node_ids(self):
+        client = WaveMeshInternalApiClient()
+        client.tenant_id = "tenant"
+        valid = {"tenant_id":"tenant","service_client_id":"service-client", "entries":[
+            {"node_id":"node-1","name":"First","external_id":"entry-one","secret":"must not escape"}]}
+        with patch.object(client,"_request",AsyncMock(return_value=valid)):
+            result = await client.get_provisioning_entries()
+            self.assertNotIn("secret",result["entries"][0])
+        for invalid in (valid | {"tenant_id":"other"}, valid | {"entries":valid["entries"]*2},
+                        valid | {"entries":[valid["entries"][0] | {"node_id":"../other"}]}):
+            with patch.object(client,"_request",AsyncMock(return_value=invalid)), self.assertRaises(InternalApiError):
+                await client.get_provisioning_entries()
+
+    async def test_stale_or_foreign_selection_does_not_prepare_a_grant(self):
+        state = AsyncMock()
+        state.get_data.return_value = {"add_key_user_id":1,"add_key_days":30,
+                                      "add_key_node_id":"node-1","add_key_service_client_id":"service-1"}
+        for catalog in ({"service_client_id":"service-1","entries":[]},
+                        {"service_client_id":"other","entries":[{"node_id":"node-1"}]}):
+            with patch.object(handler,"is_admin",return_value=True), patch.object(handler,"saas_client_mode_enabled",return_value=True), patch.object(handler,"Journal") as journal, patch.object(handler.internal_api_client,"get_provisioning_entries",AsyncMock(return_value=catalog)):
+                journal.return_value.for_callback.return_value = None
+                await handler.confirm(callback(),state)
+                journal.return_value.prepare.assert_not_called()
+
+    async def test_selected_node_reaches_durable_intent(self):
+        state = AsyncMock()
+        state.get_data.return_value = {"add_key_user_id":1,"add_key_user_telegram_id":123,"add_key_days":30,
+                                      "add_key_node_id":"node-2","add_key_service_client_id":"service-1"}
+        catalog = {"service_client_id":"service-1","entries":[{"node_id":"node-1"},{"node_id":"node-2"}]}
+        with patch.object(handler,"is_admin",return_value=True), patch.object(handler,"saas_client_mode_enabled",return_value=True), patch.object(handler,"Journal") as journal, patch.object(handler.internal_api_client,"get_provisioning_entries",AsyncMock(return_value=catalog)), patch("database.requests.get_admin_tariff",return_value={"id":1,"max_ips":1}), patch.object(handler,"show",AsyncMock()):
+            journal.return_value.for_callback.return_value = None
+            await handler.confirm(callback(),state)
+            self.assertEqual(journal.return_value.prepare.call_args.kwargs["requested_node_id"],"node-2")
+
     async def test_readback_is_get_with_original_key_and_strips_unknown_fields(self):
         client = WaveMeshInternalApiClient()
         request_identity = "fixture0000000000"

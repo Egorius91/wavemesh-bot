@@ -202,6 +202,11 @@ async def drain_access_shadow_outbox_once(*, limit: int | None = None) -> dict[s
         event_id = int(row["id"])
         attempts = int(row["attempts"] or 0) + 1
         try:
+            from database.saas_access_projection import get_binding
+            if get_binding(int(row["legacy_key_id"])) is not None:
+                _mark_delivered(event_id)
+                stats["delivered"] += 1
+                continue
             snapshot = _deserialize_snapshot(row["payload_json"])
             await sync_access_shadow_snapshot(snapshot, reason=f"outbox_{row['reason']}")
             _mark_delivered(event_id)

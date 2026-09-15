@@ -32,7 +32,9 @@ if not saas_client_mode_enabled():
     router.include_router(tariffs_router)
 else:
     from .managed_trial import router as managed_trial_router
+    from .saas_keys import router as saas_keys_router
 
     router.include_router(managed_trial_router)
+    router.include_router(saas_keys_router)
 
 __all__ = ["router"]

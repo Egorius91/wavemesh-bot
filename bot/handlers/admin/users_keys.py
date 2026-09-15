@@ -28,7 +28,10 @@ from bot.utils.text import safe_edit_or_send
 
 router = Router()
 from bot.handlers.admin.provisioning import reconcile as reconcile_admin_grant
+from bot.handlers.admin.provisioning import select_entry, catalog_page
 router.callback_query.register(reconcile_admin_grant, F.data.startswith('admin_grant_reconcile:'))
+router.callback_query.register(select_entry, F.data.startswith('admin_grant_entry:'))
+router.callback_query.register(catalog_page, F.data.startswith('admin_entry_page:'))
 USERS_PER_PAGE = 20
 ACCESS_PROVISIONING_TIMEOUT_SECONDS = 120
 ACCESS_PROVISIONING_POLL_SECONDS = 2
@@ -278,11 +281,8 @@ async def start_add_key(callback: CallbackQuery, state: FSMContext):
         return
     from bot.services.runtime_mode import saas_client_mode_enabled
     if saas_client_mode_enabled():
-        await state.clear()
-        await state.update_data(add_key_user_id=user['id'], add_key_user_telegram_id=telegram_id)
-        await state.set_state(AdminStates.add_key_traffic)
-        await safe_edit_or_send(callback.message, 'SaaS назначит Entry для доступа. Введите лимит трафика в ГБ (0 = без лимита):')
-        await callback.answer()
+        from bot.handlers.admin.provisioning import begin
+        await begin(callback, state, user)
         return
     servers = get_active_servers()
     if not servers:
@@ -365,7 +365,7 @@ async def process_add_key_days(message: Message, state: FSMContext):
     data = await state.get_data()
     from bot.services.runtime_mode import saas_client_mode_enabled
     if saas_client_mode_enabled():
-        await safe_edit_or_send(message, f"Подтвердите выдачу на {days} дней, трафик {data.get('add_key_traffic_gb', 0)} ГБ (0 = без лимита). Entry назначит SaaS.", reply_markup=add_key_confirm_kb(), force_new=True)
+        await safe_edit_or_send(message, f"Подтвердите выдачу пользователю {data.get('add_key_user_telegram_id')} на {days} дней, трафик {data.get('add_key_traffic_gb', 0)} ГБ (0 = без лимита). Entry: {escape_html(data.get('add_key_node_name', ''))}.", reply_markup=add_key_confirm_kb(), force_new=True)
         return
     from database.requests import get_server_by_id
     server = get_server_by_id(data['add_key_server_id'])

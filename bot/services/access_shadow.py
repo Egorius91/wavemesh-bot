@@ -163,7 +163,7 @@ _SELECT_SNAPSHOT = """
 def get_access_shadow_snapshot(key_id: int) -> AccessShadowSnapshot | None:
     with get_db() as conn:
         row = conn.execute(
-            f"{_SELECT_SNAPSHOT} WHERE vk.id = ? LIMIT 1",
+            f"{_SELECT_SNAPSHOT} WHERE vk.id = ? AND vk.saas_managed=0 LIMIT 1",
             (int(key_id),),
         ).fetchone()
     return _snapshot_from_row(row) if row else None
@@ -176,9 +176,9 @@ def list_access_shadow_snapshots(
 ) -> list[AccessShadowSnapshot]:
     resolved_limit = min(MAX_BACKFILL_LIMIT, max(1, int(limit or _backfill_limit())))
     params: list[Any] = []
-    where = ""
+    where = " WHERE vk.saas_managed=0"
     if telegram_id is not None:
-        where = " WHERE u.telegram_id = ?"
+        where += " AND u.telegram_id = ?"
         params.append(int(telegram_id))
     params.append(resolved_limit)
 

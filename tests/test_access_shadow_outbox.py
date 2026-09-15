@@ -19,6 +19,9 @@ class AccessShadowOutboxTests(unittest.TestCase):
         self.db_patch = patch.object(connection, "DB_PATH", self.db_path)
         self.db_patch.start()
         outbox.ensure_access_shadow_outbox_schema()
+        from database.saas_access_projection import ensure_schema
+        with connection.get_db() as conn:
+            ensure_schema(conn)
         self.snapshot = AccessShadowSnapshot(
             telegram_id=123,
             legacy_key_id=7,
@@ -78,6 +81,18 @@ class AccessShadowOutboxTests(unittest.TestCase):
         self.assertEqual(delivered.legacy_key_id, 7)
         self.assertFalse(delivered.enabled)
         self.assertEqual(sync.await_args.kwargs["reason"], "outbox_delete")
+
+    def test_pre_adoption_event_is_retired_even_after_local_key_deletion(self):
+        outbox.enqueue_access_shadow_snapshot(self.snapshot, reason="mutation_update")
+        with connection.get_db() as conn:
+            # Binding deliberately outlives vpn_keys; no local key is required.
+            conn.execute("INSERT INTO saas_access_projections VALUES ('tenant','access-1','node-1','user-1',1,123,7,1)")
+        enabled, base_url, tenant_id, token = self._configured_client()
+        with enabled, base_url, tenant_id, token, patch.object(outbox,"sync_access_shadow_snapshot",AsyncMock()) as sync:
+            stats = asyncio.run(outbox.drain_access_shadow_outbox_once())
+        sync.assert_not_awaited()
+        self.assertEqual(stats["failed"],0)
+        self.assertEqual(outbox.pending_access_shadow_outbox_count(),0)
 
     def test_failure_keeps_event_and_increments_attempts(self) -> None:
         outbox.enqueue_access_shadow_snapshot(self.snapshot, reason="delete")

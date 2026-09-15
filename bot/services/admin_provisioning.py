@@ -43,6 +43,9 @@ class ProvisioningWorker:
                 raise JournalConflict("SERVICE_CREDENTIAL_CHANGED")
             if not self.journal.owner_exists(row):
                 raise JournalConflict("LOCAL_OWNER_REMOVED")
+            if row["phase"] in {"PREPARED", "USER_DISPATCHED", "USER_SYNCED", "SHADOW_DISPATCHED", "SUBMIT_READY"}:
+                if not json.loads(row["payload"]).get("requested_node_id"):
+                    raise JournalConflict("NODE_SELECTION_REQUIRED")
             if row["phase"] == "PREPARED":
                 self.journal.advance(row, "USER_DISPATCHED")
                 await self.client.upsert_telegram_user(**json.loads(row["user_payload"]),
@@ -93,7 +96,7 @@ class ProvisioningWorker:
                             or access.get("subscription_url") != material["subscription_url"]
                             or datetime.fromisoformat(access["expires_at"].replace("Z", "+00:00")) != datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))):
                         raise JournalConflict("MATERIAL_BINDING_CHANGED")
-                    self.journal.finalize(row, material)
+                    self.journal.finalize(row, material, self.client.tenant_id)
                     return self.journal.get(operation_id)
             status = "TIMEOUT" if self.journal.clock() - row["created_at"] >= 900 else "PENDING"
             self.journal.release(row, status=status, error="AWAITING_SAAS" if status == "TIMEOUT" else None)

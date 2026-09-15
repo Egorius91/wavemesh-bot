@@ -33,6 +33,7 @@ class FakeSaas:
     async def sync_access_shadow(self, **payload):
         self.calls.append(("shadow", payload["idempotency_key"]))
         self.shadow = payload["payload"]
+        self.binding = "access-"+self.shadow["legacy_key_id"]
         if self.lose == "shadow":
             raise TimeoutError("raw credential should never escape")
         return {"access_id": self.binding}
@@ -68,7 +69,7 @@ class FakeSaas:
 
     async def get_access_material(self, access_id):
         return {"access_id": access_id, "status": "ready" if self.ready else "materializing", "ready": self.ready,
-                "desired_version": 1, "panel_email": "fixture-email", "client_uuid": "fixture-uuid",
+                "node_id": "node-1", "desired_version": 1, "panel_email": "fixture-email", "client_uuid": "fixture-uuid",
                 "sub_id": "fixture-sub", "primary_inbound_id": 1, "protocol": "vless",
                 "subscription_url": "https://entry.invalid/sub/fixture"}
 
@@ -106,7 +107,7 @@ class JournalTests(IsolatedAsyncioTestCase):
 
     def prepare(self, **overrides):
         args = dict(callback_key="9:9:1", admin_id=9, scope=connection_scope(self.client),
-            user_id=1, telegram_id=123, tariff_id=1, days=30, traffic_limit=1024, device_limit=1)
+            user_id=1, telegram_id=123, tariff_id=1, days=30, traffic_limit=1024, device_limit=1, requested_node_id="node-1")
         args.update(overrides)
         return self.journal.prepare(**args)
 
@@ -226,31 +227,47 @@ class JournalTests(IsolatedAsyncioTestCase):
         self.assertEqual(result["last_error"], "SERVICE_CREDENTIAL_CHANGED")
         self.assertEqual(self.client.calls, [])
 
-    async def test_wrong_server_host_requires_review(self):
+    async def test_no_panel_server_is_needed_and_requested_node_is_persisted(self):
         row = self.prepare()
+        self.assertEqual(json.loads(row["payload"])["requested_node_id"], "node-1")
         with self.connect() as conn:
-            conn.execute("UPDATE servers SET host='other.invalid'")
+            conn.execute("DELETE FROM servers")
         result = await ProvisioningWorker(self.client, self.journal).reconcile(row["id"])
-        self.assertEqual(result["last_error"], "SERVER_MAPPING_AMBIGUOUS")
-        with self.connect() as conn:
-            conn.execute("UPDATE servers SET host='entry.invalid'")
-        result = await ProvisioningWorker(self.client, self.journal).reconcile(row["id"], explicit=True)
         self.assertEqual(result["status"], "DONE")
+        with self.connect() as conn:
+            key = conn.execute("SELECT * FROM vpn_keys WHERE id=?", (row["key_id"],)).fetchone()
+            self.assertIsNone(key["server_id"])
+            self.assertEqual(conn.execute("SELECT node_id FROM saas_access_projections").fetchone()[0],"node-1")
 
-    async def test_duplicate_server_mapping_and_owner_change_require_review(self):
+    async def test_changed_readback_node_or_material_node_requires_review(self):
+        for surface in ("get_access_provisioning", "get_access_material"):
+            with self.subTest(surface=surface):
+                row = self.prepare()
+                original = getattr(self.client, surface)
+                async def changed(arg):
+                    field = "assigned_entry_node_id" if surface == "get_access_provisioning" else "node_id"
+                    return {**await original(arg), field:"node-2"}
+                setattr(self.client, surface, changed)
+                result = await ProvisioningWorker(self.client, self.journal).reconcile(row["id"], explicit=True)
+                self.assertEqual(result["status"], "MANUAL_REVIEW")
+                setattr(self.client, surface, original)
+        self.assertEqual(sum(a=="create" for a, _ in self.client.calls), 1)
+
+    async def test_owner_change_after_lost_response_requires_review(self):
         row = self.prepare()
         self.client.lose = "create"
         await ProvisioningWorker(self.client, self.journal).reconcile(row["id"])
-        with self.connect() as conn:
-            conn.execute("""INSERT INTO servers(name,host,port,web_base_path,login,password)
-                VALUES ('second','entry.invalid',443,'/','fixture','fixture')""")
+        self.client.owner = "different-user"
         self.now += 16
         result = await ProvisioningWorker(self.client, self.journal).reconcile(row["id"])
-        self.assertEqual(result["last_error"], "SERVER_MAPPING_AMBIGUOUS")
-        self.client.owner = "different-user"
-        result = await ProvisioningWorker(self.client, self.journal).reconcile(row["id"], explicit=True)
         self.assertEqual(result["last_error"], "SAAS_OWNER_CHANGED")
         self.assertEqual(sum(a=="create" for a, _ in self.client.calls), 1)
+
+    async def test_legacy_unsubmitted_intent_without_node_stops_before_http(self):
+        row = self.prepare(requested_node_id=None)
+        result = await ProvisioningWorker(self.client, self.journal).reconcile(row["id"])
+        self.assertEqual(result["last_error"], "NODE_SELECTION_REQUIRED")
+        self.assertEqual(self.client.calls, [])
 
     async def test_saas_terminal_failure_is_visible_without_another_grant(self):
         row = self.prepare()

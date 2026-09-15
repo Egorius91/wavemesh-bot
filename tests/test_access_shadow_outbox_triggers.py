@@ -11,6 +11,12 @@ from database.access_shadow_outbox_triggers import ensure_access_shadow_outbox_t
 
 
 class AccessShadowOutboxTriggerTests(unittest.TestCase):
+    def test_managed_projection_does_not_enqueue_legacy_entitlements(self):
+        with connection.get_db() as conn:
+            conn.execute("INSERT INTO vpn_keys(user_id,tariff_id,saas_managed,expires_at) VALUES (1,2,1,'2026-10-15 00:00:00')")
+            conn.execute("UPDATE vpn_keys SET traffic_used=40,expires_at='2026-11-15 00:00:00'")
+            self.assertEqual(conn.execute("SELECT count(*) FROM access_shadow_outbox").fetchone()[0],0)
+
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tempdir.name) / "test.db"
@@ -32,6 +38,7 @@ class AccessShadowOutboxTriggerTests(unittest.TestCase):
                     max_ips INTEGER DEFAULT 1
                 );
                 CREATE TABLE vpn_keys (
+                    saas_managed INTEGER NOT NULL DEFAULT 0,
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
                     server_id INTEGER,

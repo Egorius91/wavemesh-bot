@@ -64,6 +64,7 @@ class InternalApiAccessTests(unittest.IsolatedAsyncioTestCase):
                     "access_id": "access-12345678",
                     "status": "ready",
                     "ready": True,
+                    "node_id": "node-1",
                     "desired_version": 2,
                     "panel_email": "wm_access_123",
                     "client_uuid": "f5ee70ce-8a27-4f15-b81e-edc8a8bd11c4",
