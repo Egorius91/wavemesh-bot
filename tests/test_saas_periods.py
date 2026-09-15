@@ -44,6 +44,7 @@ class ScheduledPeriodTests(TestCase):
         self.assertIn("• Тариф:",text)
         self.assertIn("20.10.2026",text)
         self.assertIn("не удалось",text)
+        self.assertIn("• Тариф:",scheduled_periods_text([period(tariff_name=" "*1000+"name")]))
 
     def test_datetime_parser_rejects_overflow_and_unbounded_input(self):
         for value in ("0001-01-01T00:00:00+23:00", "9"*100000, {}, None):

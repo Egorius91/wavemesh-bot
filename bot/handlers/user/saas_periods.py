@@ -40,8 +40,8 @@ def scheduled_periods_text(value):
             continue
         seen.add(period_id)
         name = item.get("tariff_name")
-        name = name[:80] if isinstance(name, str) and name.strip() else "Тариф"
-        name = " ".join(name.split())
+        name = name[:80] if isinstance(name, str) else ""
+        name = " ".join(name.split()) or "Тариф"
         periods.append((start, end, escape_html(name)))
     if not periods:
         return unavailable
