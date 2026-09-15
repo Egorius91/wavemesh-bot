@@ -23,14 +23,14 @@ class AdapterTests(IsolatedAsyncioTestCase):
                   "command_id": "command-1", "assigned_entry_node_id": "node-1", "legacy_key_id": "1",
                   "expires_at": "2026-10-01T00:00:00Z", "can_retry_create": False, "secret": "not forwarded"}
         with patch.object(client, "_request", AsyncMock(return_value=result)) as request:
-            observed = await client.get_access_provisioning("admin-grant-fixture-1")
-            request.assert_awaited_once_with("GET", "bot/access-provisioning", idempotency_key="admin-grant-fixture-1")
+            observed = await client.get_access_provisioning("admin-grant-0000000000000000")
+            request.assert_awaited_once_with("GET", "bot/access-provisioning", idempotency_key="admin-grant-0000000000000000")
             self.assertNotIn("secret", observed)
         for invalid in (None, {}, {**result, "submission": []}, {**result, "can_retry_create": True},
                         {**result, "expires_at": "2026-10-01"}, {**result, "access_id": "../foreign"}):
             with self.subTest(invalid=invalid), patch.object(client, "_request", AsyncMock(return_value=invalid)):
                 with self.assertRaises(InternalApiError):
-                    await client.get_access_provisioning("admin-grant-fixture-1")
+                    await client.get_access_provisioning("admin-grant-0000000000000000")
 
     async def test_unauthorized_or_nonprivate_confirmation_never_opens_journal(self):
         for admin, chat, kind in ((8,8,"private"), (9,10,"private"), (9,-1,"group")):
