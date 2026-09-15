@@ -36,6 +36,7 @@ from bot.services.internal_api import (
 )
 from bot.services.runtime_mode import env_flag, saas_client_mode_enabled
 from bot.services.admin_provisioning import start_admin_provisioning_worker, stop_admin_provisioning_worker
+from bot.services.access_replacement import start_access_replacement_worker, stop_access_replacement_worker
 from bot.services.startup_policy import (
     InternalApiStartupRequired,
     enforce_internal_api_startup,
@@ -186,6 +187,7 @@ async def on_startup(bot: Bot):
     start_legacy_background_tasks(bot)
     if internal_api_ready and saas_mode:
         start_admin_provisioning_worker()
+        start_access_replacement_worker()
 
     from bot.utils.update_block import is_update_blocked, get_blocked_message
     if is_update_blocked():
@@ -217,6 +219,7 @@ async def on_shutdown(bot: Bot):
     await stop_legacy_background_tasks()
     await stop_access_shadow_outbox_worker()
     await stop_admin_provisioning_worker()
+    await stop_access_replacement_worker()
     await close_all_clients()
     await internal_api_client.close()
 
@@ -293,6 +296,7 @@ async def main():
     finally:
         await stop_legacy_background_tasks()
         await stop_admin_provisioning_worker()
+        await stop_access_replacement_worker()
         await close_all_clients()
         await bot.session.close()
 

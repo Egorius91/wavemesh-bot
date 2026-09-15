@@ -235,16 +235,35 @@ class PaymentReturnMaterializationTests(unittest.IsolatedAsyncioTestCase):
                 await self.project()
 
     async def test_replacement_updates_same_serverless_projection(self):
-        from bot.handlers.user.payments.saas import _apply_replacement_material
+        from bot.services.access_replacement import ReplacementWorker
+        from database.access_replacement import ReplacementJournal
+        from database.admin_provisioning import connection_scope
         from database.requests import get_key_details_for_user
         from database.saas_access_projection import get_binding
-        access = ready_access()
+        access = ready_access(expires_at="2099-10-01 12:30:00")
+        access["telegram_id"] = str(TELEGRAM_ID)
         with self._mock_api(access) as (_, material):
             first = await self.project()
-            access["desired_version"] = 2
+            access["legacy_key_id"] = str(first.key_id)
             replacement = ready_material() | {"desired_version":2,"client_uuid":"rotated","sub_id":"rotated-sub"}
-            material.return_value = replacement
-            await _apply_replacement_material(first.key,replacement,TELEGRAM_ID)
+            async def replace(**kwargs):
+                self.assertEqual(kwargs["expected_version"], 1)
+                access["desired_version"] = 2
+                material.return_value = replacement
+                return {"command_id":"command-1","status":"pending","desired_version":2}
+            result = {"request_id":"request-1","request_status":"SUCCEEDED","submission":"OBSERVED",
+                      "status":"READY","can_retry_replace":False,"access_id":ACCESS_ID,"command_id":"command-1",
+                      "command_status":"SUCCEEDED","assigned_entry_node_id":"node-1","desired_version":2}
+            journal = ReplacementJournal()
+            runner = ReplacementWorker(payment_return.internal_api_client, journal)
+            row = await runner.prepare("payment-return-replacement", first.key_id, TELEGRAM_ID)
+            journal.confirm(row["id"], TELEGRAM_ID, connection_scope(payment_return.internal_api_client))
+            with patch.object(payment_return.internal_api_client,"replace_access",AsyncMock(side_effect=replace)) as post, \
+                 patch.object(payment_return.internal_api_client,"get_access_replacement",AsyncMock(return_value=result)):
+                await runner.reconcile(row["id"], explicit=True)
+                await runner.reconcile(row["id"], explicit=True)
+                post.assert_awaited_once()
+                self.assertEqual(journal.get(row["id"])["status"], "DONE")
         updated = get_key_details_for_user(first.key_id,TELEGRAM_ID)
         self.assertEqual(updated["client_uuid"],"rotated")
         self.assertIsNone(updated["server_id"])

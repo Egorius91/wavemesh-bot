@@ -34,7 +34,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 INITIAL_VERSION = 21
 
 # Текущая версия схемы БД (инкрементируется при добавлении новых миграций)
-LATEST_VERSION = 44
+LATEST_VERSION = 45
 
 
 def _my_keys_item_template() -> str:
@@ -1484,6 +1484,11 @@ def migration_44(conn):
     conn.execute("DROP TRIGGER IF EXISTS trg_access_shadow_outbox_vpn_keys_update")
 
 
+def migration_45(conn):
+    from database.access_replacement import ensure_schema
+    ensure_schema(conn)
+
+
 MIGRATIONS = {
     22: migration_22,
     23: migration_23,
@@ -1508,6 +1513,7 @@ MIGRATIONS = {
     42: migration_42,
     43: migration_43,
     44: migration_44,
+    45: migration_45,
 }
 
 

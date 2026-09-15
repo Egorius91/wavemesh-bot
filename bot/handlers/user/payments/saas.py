@@ -8,7 +8,6 @@ WaveMesh SaaS Internal API for the exact mapped access.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from datetime import datetime
@@ -131,30 +130,6 @@ def _resolve_local_projection_tariffs(
         for tariff in local_tariffs
         if int(tariff.get("id") or 0) == configured_tariff_id
     ]
-
-
-def _key_matches_material(key: dict[str, Any], material: dict[str, Any]) -> bool:
-    return (
-        key.get("panel_email") == material.get("panel_email")
-        and key.get("client_uuid") == material.get("client_uuid")
-        and key.get("sub_id") == material.get("sub_id")
-        and int(key.get("panel_inbound_id") or 0)
-        == int(material.get("primary_inbound_id") or 0)
-    )
-
-
-async def _apply_replacement_material(key, material, telegram_id):
-    from bot.handlers.user.payments.payment_return import load_verified_ready_payment_return
-    from database.saas_access_projection import project_ready
-    verified = await load_verified_ready_payment_return(telegram_id=telegram_id, access_id=material["access_id"])
-    if verified.material != material:
-        raise InternalApiError("Access changed during replacement read", retryable=True)
-    access = verified.access
-    project_ready(tenant_id=internal_api_client.tenant_id, saas_user_id=verified.saas_user_id,
-                  user_id=int(key["user_id"]), telegram_id=telegram_id, material=material,
-                  expires_at=access["expires_at"], traffic_limit=int(access["traffic_limit_bytes"] or 0),
-                  traffic_used=int(access.get("traffic_used_bytes") or 0),
-                  tariff_id=int(key["tariff_id"]), key_id=int(key["id"]))
 
 
 async def _render_saas_new_access_tariffs(
@@ -483,104 +458,14 @@ async def _load_checkout_context(
 
 @router.callback_query(F.data.startswith("key_replace:"))
 async def saas_replace_access(callback: CallbackQuery) -> None:
-    """Replace one mapped access through the versioned Node Agent workflow."""
-    try:
-        key_id = int(callback.data.split(":", 1)[1])
-    except (TypeError, ValueError):
-        await callback.answer("Некорректный ключ.", show_alert=True)
-        return
+    from bot.handlers.user.replacement import begin_replacement
+    await begin_replacement(callback)
 
-    context = await _load_checkout_context(callback, key_id)
-    if context is None:
-        return
-    key, saas_context, _ = context
-    if saas_context["access"].get("status") not in {"ready", "materializing"}:
-        await callback.answer(
-            "Срок действия ключа истёк. Сначала продлите его.",
-            show_alert=True,
-        )
-        return
 
-    access = saas_context["access"]
-    access_id = access.get("access_id")
-    if not isinstance(access_id, str) or not access_id:
-        await callback.answer("Доступ WaveMesh не найден.", show_alert=True)
-        return
-
-    await callback.answer()
-    await safe_edit_or_send(
-        callback.message,
-        "⏳ <b>Заменяем ключ</b>\n\nРабочий ключ останется активным до подтверждения нового.",
-    )
-
-    try:
-        material = await internal_api_client.get_access_material(access_id)
-        if material.get("ready") is True and not _key_matches_material(key, material):
-            await _apply_replacement_material(key, material, callback.from_user.id)
-        else:
-            if material.get("ready") is True:
-                await _apply_replacement_material(key, material, callback.from_user.id)
-            current_version = access.get("desired_version")
-            if not isinstance(current_version, int) or current_version < 1:
-                raise InternalApiError("SaaS access version is invalid")
-            if access.get("status") == "materializing":
-                target_version = current_version
-            else:
-                target_version = current_version + 1
-                result = await internal_api_client.replace_access(
-                    access_id=access_id,
-                    idempotency_key=f"telegram-replace-{key_id}-{target_version}",
-                )
-                if result["desired_version"] != target_version:
-                    raise InternalApiError("SaaS replacement version is invalid")
-
-            material = {}
-            for _ in range(45):
-                material = await internal_api_client.get_access_material(access_id)
-                if (
-                    material.get("ready") is True
-                    and material.get("desired_version") == target_version
-                ):
-                    break
-                if material.get("status") == "failed":
-                    raise InternalApiError("Access replacement failed", retryable=True)
-                await asyncio.sleep(2)
-            else:
-                raise InternalApiError("Access replacement is still processing", retryable=True)
-            await _apply_replacement_material(key, material, callback.from_user.id)
-
-        from bot.keyboards.user import key_issued_kb
-        from bot.utils.key_sender import send_key_with_qr
-        from database.requests import get_key_details_for_user
-
-        updated = get_key_details_for_user(key_id, callback.from_user.id)
-        if not updated:
-            raise InternalApiError("Updated local key projection is missing")
-        await send_key_with_qr(callback, updated, key_issued_kb(), is_new=False)
-    except InternalApiError as error:
-        logger.warning(
-            "SaaS access replacement failed: telegram_id=%s key_id=%s code=%s status=%s retryable=%s",
-            callback.from_user.id,
-            key_id,
-            error.code,
-            error.status,
-            error.retryable,
-        )
-        await safe_edit_or_send(
-            callback.message,
-            "❌ <b>Замена пока не завершена</b>\n\nПроверка результата задерживается. Не создавайте новую оплату; откройте этот доступ позже.",
-        )
-    except Exception as error:  # noqa: BLE001 - Telegram handler boundary
-        logger.warning(
-            "Local replacement projection failed: telegram_id=%s key_id=%s code=%s",
-            callback.from_user.id,
-            key_id,
-            type(error).__name__,
-        )
-        await safe_edit_or_send(
-            callback.message,
-            "❌ <b>Замена пока не завершена</b>\n\nРезультат требует сверки с WaveMesh. Откройте «Мои ключи» или обратитесь в поддержку.",
-        )
+@router.callback_query(F.data.startswith("replacement_"))
+async def saas_replacement_action(callback: CallbackQuery) -> None:
+    from bot.handlers.user.replacement import replacement_action
+    await replacement_action(callback)
 
 
 @router.callback_query(F.data.startswith("key_renew:"))
