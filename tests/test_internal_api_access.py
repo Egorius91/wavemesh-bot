@@ -118,13 +118,14 @@ class InternalApiAccessTests(unittest.IsolatedAsyncioTestCase):
         result = await client.replace_access(
             access_id="access-12345678",
             idempotency_key="telegram-replace-10-2",
+            expected_version=1,
         )
 
         self.assertEqual(result["desired_version"], 2)
         client._request.assert_awaited_once_with(
             "POST",
             "bot/accesses/access-12345678/replace",
-            json_body={},
+            json_body={"expected_version": 1},
             idempotency_key="telegram-replace-10-2",
         )
 

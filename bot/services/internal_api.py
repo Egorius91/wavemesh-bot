@@ -501,25 +501,36 @@ class WaveMeshInternalApiClient:
         *,
         access_id: str,
         idempotency_key: str,
+        expected_version: int,
     ) -> dict[str, Any]:
+        from bot.services.replacement_contract import reference, request_values
+        try:
+            request_values(access_id, idempotency_key, expected_version)
+        except (ValueError, TypeError) as error:
+            raise InternalApiError("Invalid replacement request", code="INTERNAL_API_INVALID_REQUEST") from error
         result = await self._request(
             "POST",
             f"bot/accesses/{access_id}/replace",
-            json_body={},
+            json_body={"expected_version": expected_version},
             idempotency_key=idempotency_key,
         )
-        if (
-            not isinstance(result, dict)
-            or not isinstance(result.get("command_id"), str)
-            or result.get("status") not in {"pending", "running"}
-            or not isinstance(result.get("desired_version"), int)
-            or result["desired_version"] < 2
-        ):
-            raise InternalApiError(
-                "Unexpected access replacement response",
-                code="INTERNAL_API_INVALID_RESPONSE",
-            )
-        return result
+        try:
+            return reference(result, expected_version)
+        except (ValueError, TypeError) as error:
+            raise InternalApiError("Invalid replacement response", code="INTERNAL_API_INVALID_RESPONSE") from error
+
+    async def get_access_replacement(self, access_id: str, idempotency_key: str, expected_version: int) -> dict[str, Any]:
+        from bot.services.replacement_contract import readback, request_values
+        try:
+            request_values(access_id, idempotency_key, expected_version)
+        except (ValueError, TypeError) as error:
+            raise InternalApiError("Invalid replacement request", code="INTERNAL_API_INVALID_REQUEST") from error
+        result = await self._request("GET", f"bot/accesses/{access_id}/replacement?expected_version={expected_version}",
+                                     idempotency_key=idempotency_key)
+        try:
+            return readback(result, access_id, expected_version)
+        except (ValueError, TypeError) as error:
+            raise InternalApiError("Invalid replacement readback", code="INTERNAL_API_INVALID_RESPONSE") from error
 
     async def create_access(
         self,
