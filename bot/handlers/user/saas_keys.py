@@ -35,6 +35,7 @@ def actions(access=None):
         if isinstance(key_id, str) and key_id.isdigit():
             rows.append([InlineKeyboardButton(text="Продлить", callback_data="key_renew:"+key_id)])
             if access.get("status") == "ready":
+                rows.append([InlineKeyboardButton(text="Как подключиться", callback_data="onboarding_ready:"+key_id)])
                 rows.append([InlineKeyboardButton(text="Заменить ключ", callback_data="key_replace:"+key_id)])
     rows.extend([
         [InlineKeyboardButton(text="Автопродление", callback_data="saas_billing")],

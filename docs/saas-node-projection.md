@@ -25,6 +25,9 @@ credential rotation does not imply permission for a quota reset.
 
 In SaaS mode, key list/detail/configuration use the authenticated dashboard and
 material endpoints. Paid/trial delivery still sends the verified URL before
+local projection. Guided HAPP/OneXray connection delivery also reloads verified
+SaaS material and accepts serverless canonical projections. It checks private
+chat ownership before rendering a credential. Paid/trial delivery retains
 best-effort local projection/linking. A lost link response reuses the committed
 binding and original projection idempotency key. Legacy delete/unlink buttons do
 not claim SaaS revocation/cancellation; the provider billing view remains linked.

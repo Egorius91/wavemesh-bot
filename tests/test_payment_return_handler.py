@@ -203,6 +203,9 @@ class PaymentReturnMaterializationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((first.outcome,second.outcome),("created","existing"))
         self.assertIsNone(first.key["server_id"])
         self.assertEqual(link.await_args_list[0],link.await_args_list[1])
+        from bot.handlers.user.onboarding import _get_available_onboarding_keys
+        with patch("bot.services.runtime_mode.saas_client_mode_enabled",return_value=True):
+            self.assertEqual([k["id"] for k in _get_available_onboarding_keys(TELEGRAM_ID)],[first.key_id])
 
     async def test_ready_renewal_refreshes_existing_projection_once(self):
         access = ready_access()

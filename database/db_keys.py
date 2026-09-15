@@ -50,7 +50,7 @@ def get_user_vpn_keys(user_id: int) -> List[Dict[str, Any]]:
     with get_db() as conn:
         cursor = conn.execute("""
             SELECT
-                vk.id, vk.client_uuid, vk.custom_name, vk.expires_at,
+                vk.id, vk.client_uuid, vk.custom_name, vk.expires_at, vk.saas_managed,
                 vk.created_at, vk.panel_inbound_id, vk.panel_email, vk.sub_id,
                 t.name as tariff_name, t.duration_days,
                 s.name as server_name, s.id as server_id

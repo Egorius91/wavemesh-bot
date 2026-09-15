@@ -151,8 +151,11 @@ class TrialHandlerTests(IsolatedAsyncioTestCase):
     async def test_ready_delivers_before_local_projection_and_tolerates_projection_failure(self):
         self.client.get_trial.return_value = pending(status="READY", subscription_id="sub-1")
         with patch.object(payment_return.internal_api_client, "get_telegram_dashboard", AsyncMock(return_value={
-                 "accesses": [{"access_id": "access-1", "status": "ready"}]})), \
+                 "user": {"user_id":"canonical-user", "tenant_id":payment_return.internal_api_client.tenant_id},
+                 "accesses": [{"access_id": "access-1", "status": "ready", "authority":"managed", "enabled":True,
+                               "desired_version":1, "subscription_url":"https://example.invalid/sub/fixture"}]})), \
              patch.object(payment_return.internal_api_client, "get_access_material", AsyncMock(return_value={
+                 "access_id":"access-1", "node_id":"node-1", "desired_version":1,
                  "ready": True, "subscription_url": "https://example.invalid/sub/fixture"})), \
              patch.object(payment_return, "_render_verified_subscription", AsyncMock()) as deliver, \
              patch.object(payment_return, "materialize_ready_payment_return", AsyncMock(side_effect=InternalApiError("projection unavailable"))):

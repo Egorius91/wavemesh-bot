@@ -66,6 +66,20 @@ class KeyViewTests(IsolatedAsyncioTestCase):
             await views.show_access(123,message(),access_id="access-1",config=True)
         material.assert_not_awaited()
 
+    async def test_guided_connection_reads_saas_url_and_blocks_group_delivery(self):
+        from bot.utils import onboarding_delivery as guided
+        from bot.handlers.user import onboarding
+        key = {"id":7,"telegram_id":123,"saas_managed":1,"server_id":None}
+        material = access() | {"ready":True,"node_id":"node-1"}
+        with patch("bot.services.runtime_mode.saas_client_mode_enabled",return_value=True), patch.object(views.internal_api_client,"get_access_material",AsyncMock(return_value=material)), patch("database.requests.get_user_keys_for_display",return_value=[key]):
+            self.assertEqual(onboarding._get_available_onboarding_keys(123),[key])
+            self.assertEqual(await guided._access_value(key),access()["subscription_url"])
+            callback = SimpleNamespace(message=message(-1,"group"),from_user=SimpleNamespace(id=123))
+            with patch.object(guided,"_access_value",AsyncMock()) as value:
+                self.assertFalse(await guided.send_onboarding_connection(callback,key,page_key="fixture",fallback_text="fixture",context={}))
+                value.assert_not_awaited()
+        self.handles[2].assert_not_awaited()
+
     async def test_old_key_entrypoints_do_not_discover_local_panels(self):
         from bot.handlers.user import keys
         from bot.utils.key_sender import send_key_with_qr
