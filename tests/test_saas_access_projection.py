@@ -1,4 +1,6 @@
 from concurrent.futures import ProcessPoolExecutor
+import multiprocessing
+import os
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
@@ -24,8 +26,14 @@ def values():
                           "client_uuid":"fixture-uuid", "sub_id":"fixture-sub"})
 
 
+def set_process_barrier(barrier):
+    global process_barrier
+    process_barrier = barrier
+
+
 def concurrent_project(path):
-    return project_ready(connect=lambda:connection(path), **values())[0]
+    process_barrier.wait(timeout=15)
+    return project_ready(connect=lambda:connection(path), **values())[0], os.getpid()
 
 
 class ProjectionTests(TestCase):
@@ -65,10 +73,13 @@ class ProjectionTests(TestCase):
         return project_ready(connect=self.connect, **(values() | overrides))
 
     def test_two_processes_and_restart_reuse_one_serverless_key(self):
-        with ProcessPoolExecutor(2) as pool:
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(2, mp_context=ctx, initializer=set_process_barrier,
+                                 initargs=(ctx.Barrier(2),)) as pool:
             first, second = list(pool.map(concurrent_project, [str(self.path)]*2))
-        self.assertEqual(first, second)
-        self.assertEqual(self.project()[0], first)
+        self.assertNotEqual(first[1], second[1])
+        self.assertEqual(first[0], second[0])
+        self.assertEqual(self.project()[0], first[0])
         keys = self.rows("SELECT * FROM vpn_keys")
         self.assertEqual(len(keys), 1)
         self.assertIsNone(keys[0]["server_id"])

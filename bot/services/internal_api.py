@@ -615,6 +615,17 @@ class WaveMeshInternalApiClient:
                 code="INTERNAL_API_INVALID_RESPONSE",
             )
         if result["ready"]:
+            from urllib.parse import urlsplit
+            try:
+                raw_url = result["subscription_url"]
+                if not isinstance(raw_url, str):
+                    raise ValueError()
+                url = urlsplit(raw_url)
+                valid_url = (isinstance(raw_url, str) and url.scheme == "https" and bool(url.hostname)
+                             and not url.username and not url.password and not url.fragment
+                             and not any(c.isspace() or ord(c) < 32 for c in raw_url))
+            except (KeyError, TypeError, ValueError):
+                valid_url = False
             required_strings = (
                 "node_id",
                 "panel_email",
@@ -631,7 +642,7 @@ class WaveMeshInternalApiClient:
                 or type(result.get("primary_inbound_id")) is not int
                 or result["primary_inbound_id"] < 1
                 or result["protocol"] != "vless"
-                or not result["subscription_url"].startswith("https://")
+                or not valid_url
             ):
                 raise InternalApiError(
                     "Unexpected ready access material response",

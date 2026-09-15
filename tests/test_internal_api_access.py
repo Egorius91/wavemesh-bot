@@ -82,6 +82,15 @@ class InternalApiAccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(pending["ready"])
         self.assertTrue(ready["ready"])
         self.assertEqual(ready["primary_inbound_id"], 9)
+        for override in ({"subscription_url":"https://u:p@entry.invalid/sub/value"},
+                         {"subscription_url":"https:///sub/value"}, {"subscription_url":123},
+                         {"subscription_url":"https://entry.invalid/sub/value#fragment"},
+                         {"subscription_url":"https://entry.invalid/sub/\nvalue"},
+                         {"node_id":"../other"}, {"desired_version":True}, {"primary_inbound_id":True}):
+            with self.subTest(override=override):
+                client._request = AsyncMock(return_value=ready | override)
+                with self.assertRaises(InternalApiError):
+                    await client.get_access_material("access-12345678")
 
     async def test_get_access_material_rejects_incomplete_ready_response(self):
         client = WaveMeshInternalApiClient()
