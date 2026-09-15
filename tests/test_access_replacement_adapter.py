@@ -164,7 +164,8 @@ class ReplacementHttpTests(IsolatedAsyncioTestCase):
                 self.assertNotIn("must-not-forward",str(caught.exception))
                 self.assertEqual(request.await_count,1)
         with patch.object(client,"_request",AsyncMock(return_value=dict(command_id="command-1",status="succeeded",desired_version=2))):
-            self.assertEqual((await client.replace_access(access_id="access-1",idempotency_key="original-request-key",expected_version=1))["status"],"succeeded")
+            request_identity = "fixture0000000000"
+            self.assertEqual((await client.replace_access(access_id="access-1",idempotency_key=request_identity,expected_version=1))["status"],"succeeded")
 
 
 class ReplacementStartupTests(IsolatedAsyncioTestCase):
