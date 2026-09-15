@@ -8,6 +8,7 @@ from bot.services.internal_api import InternalApiError, internal_api_client, val
 from bot.services.runtime_mode import saas_client_mode_enabled
 from bot.utils.text import safe_edit_or_send
 from .payments.payment_return import process_ready_payment_return
+from bot.services.private_chat import private_actor_id, private_message_for
 
 router = Router()
 
@@ -27,7 +28,7 @@ def _buttons(*, activate: bool = False) -> InlineKeyboardMarkup:
 
 async def _show(message: Message, telegram_id: int, *, activate: bool = False) -> None:
     # Material must never be posted to a group or a different user's chat.
-    if not saas_client_mode_enabled() or message.chat.type != "private" or message.chat.id != telegram_id:
+    if not saas_client_mode_enabled() or private_message_for(message, telegram_id) is None:
         return
     try:
         dashboard = await internal_api_client.get_telegram_dashboard(telegram_id)
@@ -73,12 +74,15 @@ async def _show(message: Message, telegram_id: int, *, activate: bool = False) -
 
 @router.message(Command("trial"), StateFilter("*"))
 async def trial_command(message: Message) -> None:
-    if message.from_user:
-        await _show(message, message.from_user.id)
+    telegram_id = private_actor_id(message)
+    if telegram_id is not None:
+        await _show(message, telegram_id)
 
 
 @router.callback_query(F.data.in_({"trial_subscription", "trial_activate", "trial_status"}), StateFilter("*"))
 async def trial_callback(callback: CallbackQuery) -> None:
+    telegram_id = private_actor_id(callback)
+    if telegram_id is None:
+        return
     await callback.answer()
-    if isinstance(callback.message, Message):
-        await _show(callback.message, callback.from_user.id, activate=callback.data == "trial_activate")
+    await _show(callback.message, telegram_id, activate=callback.data == "trial_activate")
