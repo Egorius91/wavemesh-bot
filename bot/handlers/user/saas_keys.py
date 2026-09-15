@@ -3,9 +3,10 @@ from aiogram import F, Router
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.services.internal_api import InternalApiError, internal_api_client
-from bot.utils.text import escape_html, safe_edit_or_send
+from bot.utils.text import safe_edit_or_send
 from database.saas_access_projection import identity
 from bot.services.private_chat import private_message_for
+from bot.handlers.user.saas_periods import scheduled_periods_text, utc_date
 
 router = Router()
 
@@ -90,11 +91,16 @@ async def show_access(telegram_id, target, *, access_id=None, key_id=None, confi
             verified = await load_verified_ready_payment_return(telegram_id=telegram_id, access_id=access["access_id"])
             await _render_verified_subscription(message, verified)
             return
-        statuses = {"ready":"Готов", "materializing":"Настраивается", "pending":"Ожидает обработки",
+        statuses = {"ready":"Готова", "materializing":"Настраивается", "pending":"Ожидает обработки",
                     "expired":"Срок истёк", "disabled":"Отключён", "suspended":"Приостановлен",
                     "revoked":"Отозван", "failed":"Требует проверки"}
         status = statuses.get(access.get("status"), "Ожидает подтверждения")
-        text = f"<b>Доступ WaveMesh</b>\nСтатус: {status}\nСрок: {escape_html(str(access.get('expires_at') or '—'))}"
+        text = f"<b>Доступ WaveMesh</b>\nКонфигурация: {status}"
+        if access.get("status") == "ready" and access.get("enabled") is True:
+            expiry = utc_date(access.get("expires_at"))
+            deadline = expiry.strftime("%d.%m.%Y %H:%M:%S UTC") if expiry else "уточняется"
+            text += f"\nСрок текущей конфигурации: {deadline}"
+        text += scheduled_periods_text(access.get("scheduled_periods"))
         await safe_edit_or_send(message, text, reply_markup=actions(access))
     except Exception:
         await safe_edit_or_send(message, "Доступ пока не удалось подтвердить. Повторите позже или обратитесь в поддержку.")

@@ -92,3 +92,51 @@ class KeyViewTests(IsolatedAsyncioTestCase):
         self.assertEqual(show.await_count,3)
         listing.assert_awaited_once()
         self.handles[2].assert_not_awaited()
+
+    async def test_paid_gap_and_node_pending_do_not_offer_configuration(self):
+        period = {"subscription_id":"sub-1", "starts_at":"2026-10-20T00:00:00Z",
+                  "expires_at":"2026-11-20T00:00:00Z", "tariff_name":"Monthly"}
+        for status in ("expired", "pending", "materializing", "suspended"):
+            self.handles[1].return_value["accesses"] = [access() | {
+                "status":status, "enabled":False, "expires_at":"1970-01-01T00:00:00.001Z",
+                "scheduled_periods":[period]}]
+            with patch.object(views.internal_api_client,"get_access_material",AsyncMock()) as material:
+                await views.show_access(123,message(),access_id="access-1")
+            material.assert_not_awaited()
+            rendered = self.handles[-1].await_args
+            text = rendered.args[1]
+            self.assertIn("20.10.2026",text)
+            self.assertIn("Повторно оплачивать",text)
+            self.assertNotIn("1970",text)
+            self.assertNotIn(access()["subscription_url"],text)
+            callbacks = [b.callback_data for row in rendered.kwargs["reply_markup"].inline_keyboard for b in row]
+            self.assertNotIn("saas_config:access-1",callbacks)
+            self.assertNotIn("key_replace:7",callbacks)
+            self.assertIn("key_renew:7",callbacks)
+        self.handles[2].assert_not_awaited()
+
+    async def test_ready_access_keeps_current_deadline_and_future_period_separate(self):
+        self.handles[1].return_value["accesses"][0]["scheduled_periods"] = [{
+            "subscription_id":"sub-1", "starts_at":"2026-10-15T00:00:00Z",
+            "expires_at":"2026-11-15T00:00:00Z", "tariff_name":"<b>Premium & plus</b>"}]
+        await views.show_access(123,message(),key_id=7)
+        rendered = self.handles[-1].await_args
+        self.assertIn("Срок текущей конфигурации: 15.10.2026",rendered.args[1])
+        self.assertIn("Оплачено заранее",rendered.args[1])
+        self.assertIn("&lt;b&gt;Premium &amp; plus&lt;/b&gt;",rendered.args[1])
+        callbacks = [b.callback_data for row in rendered.kwargs["reply_markup"].inline_keyboard for b in row]
+        self.assertIn("saas_config:access-1",callbacks)
+
+    async def test_optional_bad_periods_do_not_hide_navigation(self):
+        self.handles[1].return_value["accesses"][0]["scheduled_periods"] = {"bad":"payload"}
+        await views.show_access(123,message(),key_id=7)
+        self.assertIn("Даты оплаченных периодов",self.handles[-1].await_args.args[1])
+        self.assertIn("Конфигурация: Готова",self.handles[-1].await_args.args[1])
+
+    async def test_period_details_are_private_and_owned(self):
+        for target in (message(-1,"group"),message(124)):
+            await views.show_access(123,target,access_id="access-1")
+        self.handles[1].assert_not_awaited()
+        self.handles[-1].assert_not_awaited()
+        await views.show_access(123,message(),access_id="foreign")
+        self.assertNotIn("Оплачено заранее",self.handles[-1].await_args.args[1])
