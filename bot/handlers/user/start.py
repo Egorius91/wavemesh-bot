@@ -146,10 +146,12 @@ async def _render_main_page(target, force_new: bool = False):
 
     # Динамическая видимость кнопок
     show_trial = (
-        not saas_client_mode_enabled()
-        and is_trial_enabled()
-        and get_trial_tariff_id() is not None
-        and not has_used_trial(user_id)
+        saas_client_mode_enabled()
+        or (
+            is_trial_enabled()
+            and get_trial_tariff_id() is not None
+            and not has_used_trial(user_id)
+        )
     )
     show_referral = is_referral_enabled()
 

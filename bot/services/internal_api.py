@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import re
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -25,6 +26,36 @@ _PAYMENT_RETURN_STATUSES = frozenset(
 )
 _PAYMENT_PROVIDERS = frozenset({"YOOKASSA", "PLATEGA"})
 _PAYMENT_PROVIDER_ROLES = frozenset({"DEFAULT", "CHOICE"})
+_TRIAL_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_TRIAL_STATUSES = frozenset({"PENDING", "MATERIALIZING", "READY", "FAILED", "EXPIRED", "DISABLED", "REVOKED"})
+
+
+def validate_trial_user_id(value: Any) -> str:
+    if not isinstance(value, str) or not _TRIAL_ID.fullmatch(value):
+        raise InternalApiError("Invalid trial user identity", code="INTERNAL_API_INVALID_RESPONSE")
+    return value
+
+
+def _validated_trial(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise InternalApiError("Invalid trial response", code="INTERNAL_API_INVALID_RESPONSE")
+    for key in ("activation_id", "access_id", "command_id"):
+        validate_trial_user_id(result.get(key))
+    if result.get("subscription_id") is not None:
+        validate_trial_user_id(result["subscription_id"])
+    if not isinstance(result.get("status"), str) or result["status"] not in _TRIAL_STATUSES:
+        raise InternalApiError("Invalid trial status", code="INTERNAL_API_INVALID_RESPONSE")
+    try:
+        expires = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
+        if expires.tzinfo is None:
+            raise ValueError("Missing timezone")
+    except (KeyError, AttributeError, TypeError, ValueError) as error:
+        raise InternalApiError("Invalid trial expiry", code="INTERNAL_API_INVALID_RESPONSE") from error
+    if result["status"] == "READY" and not result.get("subscription_id"):
+        raise InternalApiError("Unbound ready trial", code="INTERNAL_API_INVALID_RESPONSE")
+    return {key: result[key] for key in ("activation_id", "access_id", "command_id", "status", "expires_at")} | {
+        "subscription_id": result.get("subscription_id"),
+    }
 
 
 class InternalApiError(RuntimeError):
@@ -283,6 +314,17 @@ class WaveMeshInternalApiClient:
             )
 
         return result
+
+    async def activate_trial(self, user_id: str) -> dict[str, Any]:
+        # SaaS user/offer uniqueness is the durable identity across both channels.
+        user_id = validate_trial_user_id(user_id)
+        return _validated_trial(await self._request(
+            "POST", "bot/trials", json_body={"user_id": user_id, "offer_code": "TRIAL3"},
+        ))
+
+    async def get_trial(self, user_id: str) -> dict[str, Any]:
+        user_id = validate_trial_user_id(user_id)
+        return _validated_trial(await self._request("GET", f"bot/users/{user_id}/trials/TRIAL3"))
 
     async def create_order(
         self,
