@@ -53,7 +53,7 @@ async def _show(message: Message, telegram_id: int, *, activate: bool = False) -
             return
         if status in {"PENDING", "MATERIALIZING"}:
             text = "⏳ <b>Пробный доступ готовится</b>\n\nПроверьте статус немного позже. Повторная активация не нужна."
-        elif status in {"EXPIRED", "DISABLED", "REVOKED"}:
+        elif status in {"EXPIRED", "DISABLED"}:
             text = "Пробный доступ завершён или отключён. Вы можете продлить существующий доступ или обратиться за помощью."
         else:
             text = "Не удалось подготовить пробный доступ. Проверьте статус позже или обратитесь за помощью."

@@ -27,7 +27,7 @@ _PAYMENT_RETURN_STATUSES = frozenset(
 _PAYMENT_PROVIDERS = frozenset({"YOOKASSA", "PLATEGA"})
 _PAYMENT_PROVIDER_ROLES = frozenset({"DEFAULT", "CHOICE"})
 _TRIAL_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-_TRIAL_STATUSES = frozenset({"PENDING", "MATERIALIZING", "READY", "FAILED", "EXPIRED", "DISABLED", "REVOKED"})
+_TRIAL_STATUSES = frozenset({"PENDING", "MATERIALIZING", "READY", "FAILED", "EXPIRED", "DISABLED"})
 
 
 def validate_trial_user_id(value: Any) -> str:

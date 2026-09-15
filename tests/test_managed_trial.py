@@ -121,7 +121,7 @@ class TrialHandlerTests(IsolatedAsyncioTestCase):
 
     async def test_pending_terminal_and_legacy_states_never_deliver_or_reactivate(self):
         with patch.object(trial, "process_ready_payment_return", AsyncMock()) as deliver:
-            for status in ("PENDING", "MATERIALIZING", "FAILED", "EXPIRED", "DISABLED", "REVOKED"):
+            for status in ("PENDING", "MATERIALIZING", "FAILED", "EXPIRED", "DISABLED"):
                 self.client.get_trial.return_value = pending(status=status)
                 await trial.trial_command(message())
             self.client.get_trial.side_effect = InternalApiError("SECRET", code="LEGACY_TRIAL_RECONCILIATION_REQUIRED")

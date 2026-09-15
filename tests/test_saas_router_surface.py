@@ -138,13 +138,12 @@ class SaasRouterSurfaceTests(unittest.TestCase):
         self.assertFalse(matcher("pay_abcdefghijklmnopqrstuvwxyzABCDEF"))
         self.assertFalse(matcher(None))
 
-    def test_start_skips_local_catalog_and_trial_in_saas_mode(self) -> None:
+    def test_start_skips_local_catalog_and_legacy_billing_in_saas_mode(self) -> None:
         source = START.read_text(encoding="utf-8")
         self.assertIn(
             'if saas_client_mode_enabled():\n        return ""',
             source,
         )
-        self.assertIn("not saas_client_mode_enabled()", source)
         self.assertIn("if args and not saas_mode:", source)
         self.assertIn(
             "if args and not saas_mode and args.startswith('bill'):",
