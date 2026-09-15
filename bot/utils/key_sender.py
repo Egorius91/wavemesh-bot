@@ -24,6 +24,11 @@ async def send_key_with_qr(
     is_new: bool = False,
 ):
     """Start onboarding for new keys and expose it on existing key cards."""
+    from bot.services.runtime_mode import saas_client_mode_enabled
+    if saas_client_mode_enabled():
+        from bot.handlers.user.saas_keys import show_access
+        message = getattr(messageable, "message", None) or messageable
+        return await show_access(message.chat.id, messageable, key_id=key_data.get("id"), config=True)
     key_id = key_data.get("id")
     if key_id is not None:
         schedule_key_access_shadow_sync(

@@ -582,6 +582,23 @@ class WaveMeshInternalApiClient:
         return {k: result.get(k) for k in ("submission", "status", "access_id", "command_id",
                 "assigned_entry_node_id", "legacy_key_id", "expires_at", "can_retry_create")}
 
+    async def get_provisioning_entries(self) -> dict[str, Any]:
+        result = await self._request("GET", "bot/provisioning-entries")
+        if (not isinstance(result, dict) or result.get("tenant_id") != self.tenant_id
+                or not isinstance(result.get("service_client_id"), str)
+                or not _TRIAL_ID.fullmatch(result["service_client_id"])
+                or not isinstance(result.get("entries"), list)):
+            raise InternalApiError("Invalid Entry catalog", code="INTERNAL_API_INVALID_RESPONSE")
+        entries, seen = [], set()
+        for item in result["entries"]:
+            if (not isinstance(item, dict) or not isinstance(item.get("node_id"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", item["node_id"])
+                    or item["node_id"] in seen or any(not isinstance(item.get(k), str) for k in ("name","external_id"))):
+                raise InternalApiError("Invalid Entry catalog", code="INTERNAL_API_INVALID_RESPONSE")
+            seen.add(item["node_id"])
+            entries.append({k: item[k] for k in ("node_id","name","external_id")})
+        return {"tenant_id":result["tenant_id"], "service_client_id":result["service_client_id"], "entries":entries}
+
     async def get_access_material(self, access_id: str) -> dict[str, Any]:
         result = await self._request(
             "GET",
@@ -598,7 +615,19 @@ class WaveMeshInternalApiClient:
                 code="INTERNAL_API_INVALID_RESPONSE",
             )
         if result["ready"]:
+            from urllib.parse import urlsplit
+            try:
+                raw_url = result["subscription_url"]
+                if not isinstance(raw_url, str):
+                    raise ValueError()
+                url = urlsplit(raw_url)
+                valid_url = (isinstance(raw_url, str) and url.scheme == "https" and bool(url.hostname)
+                             and not url.username and not url.password and not url.fragment
+                             and not any(c.isspace() or ord(c) < 32 for c in raw_url))
+            except (KeyError, TypeError, ValueError):
+                valid_url = False
             required_strings = (
+                "node_id",
                 "panel_email",
                 "client_uuid",
                 "sub_id",
@@ -607,12 +636,13 @@ class WaveMeshInternalApiClient:
             )
             if (
                 any(not isinstance(result.get(key), str) or not result[key] for key in required_strings)
-                or not isinstance(result.get("desired_version"), int)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result["node_id"])
+                or type(result.get("desired_version")) is not int
                 or result["desired_version"] < 1
-                or not isinstance(result.get("primary_inbound_id"), int)
+                or type(result.get("primary_inbound_id")) is not int
                 or result["primary_inbound_id"] < 1
                 or result["protocol"] != "vless"
-                or not result["subscription_url"].startswith("https://")
+                or not valid_url
             ):
                 raise InternalApiError(
                     "Unexpected ready access material response",

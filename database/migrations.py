@@ -34,7 +34,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 INITIAL_VERSION = 21
 
 # Текущая версия схемы БД (инкрементируется при добавлении новых миграций)
-LATEST_VERSION = 43
+LATEST_VERSION = 44
 
 
 def _my_keys_item_template() -> str:
@@ -1475,6 +1475,15 @@ def migration_43(conn):
     ensure_schema(conn)
 
 
+def migration_44(conn):
+    from database.saas_access_projection import ensure_schema
+    _add_column(conn, "vpn_keys", "saas_managed INTEGER NOT NULL DEFAULT 0")
+    ensure_schema(conn)
+    # Startup recreates the updated triggers after migration, before workers.
+    conn.execute("DROP TRIGGER IF EXISTS trg_access_shadow_outbox_vpn_keys_insert")
+    conn.execute("DROP TRIGGER IF EXISTS trg_access_shadow_outbox_vpn_keys_update")
+
+
 MIGRATIONS = {
     22: migration_22,
     23: migration_23,
@@ -1498,6 +1507,7 @@ MIGRATIONS = {
     41: migration_41,
     42: migration_42,
     43: migration_43,
+    44: migration_44,
 }
 
 

@@ -97,8 +97,8 @@ class SaasRouterSurfaceTests(unittest.TestCase):
     def test_trial_and_tariff_routers_exist_only_in_legacy_branch(self) -> None:
         branch = first_mode_if(USER_INIT, negated=True)
         self.assertEqual(imports_in(branch.body), {"trial", "tariffs"})
-        self.assertEqual(imports_in(branch.orelse), {"managed_trial"})
-        self.assertEqual(included_routers(branch.orelse), ["managed_trial_router"])
+        self.assertEqual(imports_in(branch.orelse), {"managed_trial", "saas_keys"})
+        self.assertEqual(included_routers(branch.orelse), ["managed_trial_router", "saas_keys_router"])
 
     def test_known_legacy_links_are_blocked_without_matching_opaque_return(self) -> None:
         tree = ast.parse(START.read_text(encoding="utf-8"), filename=str(START))

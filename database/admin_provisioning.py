@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import time
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 from database.connection import get_connection
@@ -83,7 +82,7 @@ class Journal:
             conn.close()
 
     def prepare(self, *, callback_key, admin_id, scope, user_id, telegram_id,
-                tariff_id, days, traffic_limit, device_limit):
+                tariff_id, days, traffic_limit, device_limit, requested_node_id=None):
         if (not all(type(v) is int and v > 0 for v in (admin_id, user_id, telegram_id, tariff_id))
                 or type(days) is not int or not 1 <= days <= 99999
                 or type(traffic_limit) is not int or not 0 <= traffic_limit <= 2**53-1
@@ -108,6 +107,9 @@ class Journal:
             operation_id = uuid4().hex
             payload = dict(telegram_id=telegram_id, legacy_key_id=key_id, duration_days=days,
                            traffic_limit_bytes=traffic_limit, device_limit=device_limit)
+            if requested_node_id is not None:
+                from database.saas_access_projection import identity
+                payload["requested_node_id"] = identity(requested_node_id)
             user_payload = dict(telegram_id=telegram_id, username=user["username"],
                                 display_name=" ".join(v for v in (user["first_name"], user["last_name"]) if v) or None,
                                 is_bot_blocked=False)
@@ -117,10 +119,10 @@ class Journal:
                           traffic_limit_bytes=str(traffic_limit), traffic_used_bytes="0")
             conn.execute("""INSERT INTO admin_provisioning
                 (id,callback_key,scope,admin_id,user_id,telegram_id,key_id,request_key,
-                 payload,user_payload,shadow_payload,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 payload,user_payload,shadow_payload,created_at,updated_at,node_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (operation_id, callback_key, scope, admin_id, user_id, telegram_id, key_id,
-                 "admin-grant-" + operation_id, _json(payload), _json(user_payload), _json(shadow), now, now))
+                 "admin-grant-" + operation_id, _json(payload), _json(user_payload), _json(shadow), now, now, requested_node_id))
             return dict(conn.execute("SELECT * FROM admin_provisioning WHERE id=?", (operation_id,)).fetchone())
 
     def due(self, limit=20):
@@ -189,31 +191,19 @@ class Journal:
         finally:
             conn.close()
 
-    def finalize(self, row, material):
-        url = urlsplit(material["subscription_url"])
-        if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:
-            raise JournalConflict("MATERIAL_URL_INVALID")
+    def finalize(self, row, material, tenant_id):
+        from database.saas_access_projection import apply_ready
         with self.transaction() as conn:
             current = self._owned(conn, row)
-            if current["phase"] != "OBSERVED" or material["access_id"] != current["access_id"]:
+            if (current["phase"] != "OBSERVED" or material["access_id"] != current["access_id"]
+                    or material.get("node_id") != current["node_id"]):
                 raise JournalConflict("MATERIAL_BINDING_CHANGED")
-            key = conn.execute("""SELECT k.*,u.telegram_id,u.is_bot_blocked,u.is_banned FROM vpn_keys k
-                JOIN users u ON u.id=k.user_id WHERE k.id=?""", (row["key_id"],)).fetchone()
-            if not key or key["user_id"] != row["user_id"] or key["telegram_id"] != row["telegram_id"] or key["is_bot_blocked"] or key["is_banned"]:
+            key = conn.execute("SELECT tariff_id FROM vpn_keys WHERE id=?", (row["key_id"],)).fetchone()
+            if not key:
                 raise JournalConflict("LOCAL_OWNER_REMOVED")
-            # No single-server fallback. Panel host aliases require explicit mapping work.
-            servers = conn.execute("SELECT id,host FROM servers WHERE is_active=1").fetchall()
-            matches = [s["id"] for s in servers if urlsplit(s["host"] if "://" in s["host"] else "https://"+s["host"]).hostname == url.hostname]
-            if len(matches) != 1:
-                raise JournalConflict("SERVER_MAPPING_AMBIGUOUS")
-            for field in ("client_uuid", "panel_email", "sub_id"):
-                if key[field] and key[field] != material[field]:
-                    raise JournalConflict("LOCAL_MATERIAL_CHANGED")
-            if key["server_id"] is not None and key["server_id"] != matches[0]:
-                raise JournalConflict("LOCAL_SERVER_CHANGED")
-            conn.execute("""UPDATE vpn_keys SET server_id=?,panel_inbound_id=?,panel_email=?,
-                client_uuid=?,sub_id=?,expires_at=? WHERE id=?""",
-                (matches[0], material["primary_inbound_id"], material["panel_email"], material["client_uuid"],
-                 material["sub_id"], datetime.fromisoformat(current["expires_at"].replace("Z", "+00:00")).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), row["key_id"]))
+            apply_ready(conn, tenant_id=tenant_id, saas_user_id=current["saas_user_id"],
+                user_id=current["user_id"], telegram_id=current["telegram_id"], key_id=current["key_id"],
+                material=material, expires_at=current["expires_at"], tariff_id=key["tariff_id"],
+                traffic_limit=json.loads(current["payload"])["traffic_limit_bytes"])
             conn.execute("""UPDATE admin_provisioning SET phase='DONE',status='DONE',last_error=NULL,
                 updated_at=?,lease_token=NULL,lease_until=0 WHERE id=?""", (self.clock(), row["id"]))

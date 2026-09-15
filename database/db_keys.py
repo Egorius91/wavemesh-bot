@@ -665,7 +665,7 @@ def get_user_keys_for_display(telegram_id: int) -> List[Dict[str, Any]]:
     with get_db() as conn:
         cursor = conn.execute("""
             SELECT
-                vk.id, vk.client_uuid, vk.custom_name, vk.expires_at,
+                vk.id, vk.client_uuid, vk.custom_name, vk.expires_at, vk.saas_managed,
                 s.name as server_name, s.id as server_id, vk.panel_email,
                 vk.sub_id,
                 vk.traffic_used, vk.traffic_limit,

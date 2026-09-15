@@ -143,20 +143,18 @@ def _key_matches_material(key: dict[str, Any], material: dict[str, Any]) -> bool
     )
 
 
-def _apply_replacement_material(key: dict[str, Any], material: dict[str, Any]) -> None:
-    from database.requests import update_vpn_key_config
-
-    server_id = key.get("server_id")
-    if not server_id:
-        raise InternalApiError("Local key has no server mapping")
-    update_vpn_key_config(
-        key_id=int(key["id"]),
-        server_id=int(server_id),
-        panel_inbound_id=int(material["primary_inbound_id"]),
-        panel_email=str(material["panel_email"]),
-        client_uuid=str(material["client_uuid"]),
-        sub_id=str(material["sub_id"]),
-    )
+async def _apply_replacement_material(key, material, telegram_id):
+    from bot.handlers.user.payments.payment_return import load_verified_ready_payment_return
+    from database.saas_access_projection import project_ready
+    verified = await load_verified_ready_payment_return(telegram_id=telegram_id, access_id=material["access_id"])
+    if verified.material != material:
+        raise InternalApiError("Access changed during replacement read", retryable=True)
+    access = verified.access
+    project_ready(tenant_id=internal_api_client.tenant_id, saas_user_id=verified.saas_user_id,
+                  user_id=int(key["user_id"]), telegram_id=telegram_id, material=material,
+                  expires_at=access["expires_at"], traffic_limit=int(access["traffic_limit_bytes"] or 0),
+                  traffic_used=int(access.get("traffic_used_bytes") or 0),
+                  tariff_id=int(key["tariff_id"]), key_id=int(key["id"]))
 
 
 async def _render_saas_new_access_tariffs(
@@ -496,7 +494,7 @@ async def saas_replace_access(callback: CallbackQuery) -> None:
     if context is None:
         return
     key, saas_context, _ = context
-    if not key.get("is_active"):
+    if saas_context["access"].get("status") not in {"ready", "materializing"}:
         await callback.answer(
             "Срок действия ключа истёк. Сначала продлите его.",
             show_alert=True,
@@ -518,8 +516,10 @@ async def saas_replace_access(callback: CallbackQuery) -> None:
     try:
         material = await internal_api_client.get_access_material(access_id)
         if material.get("ready") is True and not _key_matches_material(key, material):
-            _apply_replacement_material(key, material)
+            await _apply_replacement_material(key, material, callback.from_user.id)
         else:
+            if material.get("ready") is True:
+                await _apply_replacement_material(key, material, callback.from_user.id)
             current_version = access.get("desired_version")
             if not isinstance(current_version, int) or current_version < 1:
                 raise InternalApiError("SaaS access version is invalid")
@@ -547,7 +547,7 @@ async def saas_replace_access(callback: CallbackQuery) -> None:
                 await asyncio.sleep(2)
             else:
                 raise InternalApiError("Access replacement is still processing", retryable=True)
-            _apply_replacement_material(key, material)
+            await _apply_replacement_material(key, material, callback.from_user.id)
 
         from bot.keyboards.user import key_issued_kb
         from bot.utils.key_sender import send_key_with_qr
@@ -568,10 +568,10 @@ async def saas_replace_access(callback: CallbackQuery) -> None:
         )
         await safe_edit_or_send(
             callback.message,
-            "❌ <b>Замена пока не завершена</b>\n\nСтарый ключ сохранён и продолжает работать. Повторите позже.",
+            "❌ <b>Замена пока не завершена</b>\n\nПроверка результата задерживается. Не создавайте новую оплату; откройте этот доступ позже.",
         )
     except Exception as error:  # noqa: BLE001 - Telegram handler boundary
-        logger.exception(
+        logger.warning(
             "Local replacement projection failed: telegram_id=%s key_id=%s code=%s",
             callback.from_user.id,
             key_id,
@@ -579,7 +579,7 @@ async def saas_replace_access(callback: CallbackQuery) -> None:
         )
         await safe_edit_or_send(
             callback.message,
-            "❌ <b>Замена пока не завершена</b>\n\nНовый доступ сохранён в WaveMesh. Повторите замену, чтобы обновить ключ в боте.",
+            "❌ <b>Замена пока не завершена</b>\n\nРезультат требует сверки с WaveMesh. Откройте «Мои ключи» или обратитесь в поддержку.",
         )
 
 
