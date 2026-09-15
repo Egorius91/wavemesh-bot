@@ -34,7 +34,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 INITIAL_VERSION = 21
 
 # Текущая версия схемы БД (инкрементируется при добавлении новых миграций)
-LATEST_VERSION = 42
+LATEST_VERSION = 43
 
 
 def _my_keys_item_template() -> str:
@@ -1470,6 +1470,11 @@ def migration_42(conn):
     logger.info("Миграция v42 применена: добавлена редактируемая страница documents")
 
 
+def migration_43(conn):
+    from database.admin_provisioning import ensure_schema
+    ensure_schema(conn)
+
+
 MIGRATIONS = {
     22: migration_22,
     23: migration_23,
@@ -1492,6 +1497,7 @@ MIGRATIONS = {
     40: migration_40,
     41: migration_41,
     42: migration_42,
+    43: migration_43,
 }
 
 
