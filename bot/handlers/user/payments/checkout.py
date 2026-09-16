@@ -115,6 +115,12 @@ async def render(event, result, runner, *, key_id=None, expose_url=False):
                     add(builder, "Получить ссылку на оплату", "wmco_pay:"+ref)
             if status in TERMINAL and not result.get("unresolved") and (not row or row["phase"] in {"TERMINAL", "CANCELLED"}):
                 add(builder, "Начать новую покупку", "wmco_next:"+ref)
+        elif row and row["phase"] == "TERMINAL" and row["payment_status"] == "NOT_ADMITTED" and not result.get("unresolved"):
+            text = "Покупка не создана. Заново выберите тариф и подтвердите актуальные условия."
+            if json.loads(row["payload"]).get("access_id"):
+                add(builder, "Выбрать доступ для продления", "my_keys")
+            else:
+                add(builder, "Выбрать тариф", "buy_key")
         elif row and row["phase"] == "CANCELLED":
             text = "Подтверждение отменено. Запрос на оплату не отправлялся."
             add(builder, "Выбрать тариф", "buy_key")
