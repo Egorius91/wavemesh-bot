@@ -392,7 +392,7 @@ class WaveMeshInternalApiClient:
         if recurring_consent is not None or expected_previous_order_id is not None:
             from bot.services.checkout_contract import consent, identity, request_key
             try:
-                if normalized_billing_mode != "RECURRING" or normalized_provider != "YOOKASSA":
+                if recurring_consent is not None and (normalized_billing_mode != "RECURRING" or normalized_provider != "YOOKASSA"):
                     raise ValueError("Invalid saved checkout provider")
                 request_key(idempotency_key)
                 if recurring_consent is not None:
@@ -438,7 +438,7 @@ class WaveMeshInternalApiClient:
     async def get_checkout(self, user_id: str, idempotency_key: str) -> dict[str, Any]:
         return await self._checkout_read(user_id, idempotency_key)
 
-    async def get_checkout_rejection(self, user_id: str, idempotency_key: str) -> bool:
+    async def get_checkout_rejection(self, user_id: str, idempotency_key: str, *, billing_mode="RECURRING") -> bool:
         from bot.services.checkout_contract import identity, rejection_proof, request_key
 
         try:
@@ -453,7 +453,7 @@ class WaveMeshInternalApiClient:
                 return False
             raise
         try:
-            return rejection_proof(result)
+            return rejection_proof(result, billing_mode)
         except ValueError as error:
             raise InternalApiError("Invalid checkout rejection", code="INTERNAL_API_INVALID_RESPONSE") from error
 

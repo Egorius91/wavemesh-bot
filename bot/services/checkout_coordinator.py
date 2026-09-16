@@ -1,10 +1,10 @@
-"""Restart-safe initial recurring checkout coordinator for private Telegram UI.
+"""Restart-safe shared checkout coordinator for private Telegram UI.
 
 No scheduler, TTL retry, runtime write or business-state authority lives here.
 """
 import json
 
-from bot.services.checkout_contract import TERMINAL, identity, tariff
+from bot.services.checkout_contract import TERMINAL, dispatch_payload, identity, tariff
 from bot.services.internal_api import InternalApiError
 from database.admin_provisioning import JournalConflict, connection_scope
 from database.checkout_intents import CheckoutJournal
@@ -75,7 +75,7 @@ class CheckoutCoordinator:
         # Commit before the only network POST. A failed/ambiguous commit cannot dispatch.
         if self.journal.claim_confirmed(operation_id, actor, scope, owner):
             try:
-                await self.client.create_order(**payload, idempotency_key=row["request_key"])
+                await self.client.create_order(**dispatch_payload(payload), idempotency_key=row["request_key"])
             except InternalApiError as error:
                 if error.status == 409 and error.code == "CHECKOUT_ADMISSION_REQUIRED":
                     self.journal.rejected(operation_id, actor, scope, owner)
@@ -108,7 +108,7 @@ class CheckoutCoordinator:
             if connection_scope(self.client) != scope:
                 raise JournalConflict("CHECKOUT_OWNER_CHANGED")
             self.journal.observe(row["id"], actor, scope, owner, original)
-            if missing and await self.client.get_checkout_rejection(owner, row["request_key"]):
+            if missing and await self.client.get_checkout_rejection(owner, row["request_key"], billing_mode=json.loads(row["payload"])["billing_mode"]):
                 if connection_scope(self.client) != scope:
                     raise JournalConflict("CHECKOUT_OWNER_CHANGED")
                 self.journal.prove_rejected(row["id"], actor, scope, owner)

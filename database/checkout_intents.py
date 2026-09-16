@@ -2,7 +2,7 @@
 import json
 from uuid import uuid4
 
-from bot.services.checkout_contract import consent, identity, request_key
+from bot.services.checkout_contract import consent, identity, intent_terms, request_key
 from database.admin_provisioning import Journal, JournalConflict
 
 
@@ -27,6 +27,10 @@ class CheckoutJournal(Journal):
     def _owned(row, actor, scope, owner):
         if (not row or type(actor) is not int or row["telegram_id"] != actor
                 or row["scope"] != scope or row["saas_user_id"] != owner):
+            raise JournalConflict("CHECKOUT_OWNER_CHANGED")
+        payload = json.loads(row["payload"])
+        intent_terms(payload)
+        if payload["user_id"] != owner:
             raise JournalConflict("CHECKOUT_OWNER_CHANGED")
         return dict(row)
 
@@ -58,13 +62,16 @@ class CheckoutJournal(Journal):
         if type(actor) is not int or actor <= 0 or not isinstance(scope, str) or len(scope) != 64:
             raise JournalConflict("INVALID_CHECKOUT_ACTOR")
         request_key(callback_key)
-        payload = {"user_id": identity(owner), "tariff_id": identity(tariff["tariff_id"]),
-                   "billing_mode": "RECURRING", "provider": "YOOKASSA",
-                   "recurring_consent": consent(tariff["recurring_consent"])}
+        payload = {"user_id": identity(owner), "tariff_id": identity(tariff["tariff_id"]), "billing_mode": tariff["billing_mode"]}
+        if tariff["billing_mode"] == "RECURRING":
+            payload.update(provider="YOOKASSA", recurring_consent=consent(tariff["recurring_consent"]))
+        else:
+            payload["confirmed_terms"] = consent(tariff["recurring_consent"])
         if access_id is not None:
             payload["access_id"] = identity(access_id)
         if previous is not None:
             payload["expected_previous_order_id"] = identity(previous)
+        intent_terms(payload)
         if not isinstance(tariff["name"], str) or not 1 <= len(tariff["name"]) <= 300:
             raise JournalConflict("INVALID_CHECKOUT_NAME")
         with self.transaction() as conn:
@@ -136,7 +143,9 @@ class CheckoutJournal(Journal):
                     raise JournalConflict("CHECKOUT_ORIGINAL_MISSING")
                 return
             payload = json.loads(row["payload"])
-            if (original["terms"]["tariff_id"] != payload["tariff_id"] or original["terms"]["recurring_consent"] != payload["recurring_consent"]
+            if (original["billing_mode"] != payload["billing_mode"] or
+                    payload.get("provider") is not None and original["provider"] != payload["provider"] or
+                    original["terms"]["tariff_id"] != payload["tariff_id"] or original["terms"]["recurring_consent"] != intent_terms(payload)
                     or original["purchase_kind"] != ("RENEWAL" if payload.get("access_id") else "NEW_ACCESS")
                     or row["order_id"] is not None and row["order_id"] != original["order_id"]
                     or row["phase"] in {"PREPARED", "CANCELLED"} or row["payment_status"] == "NOT_ADMITTED"):
