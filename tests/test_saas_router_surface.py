@@ -66,7 +66,7 @@ class SaasRouterSurfaceTests(unittest.TestCase):
         branch = first_mode_if(PAYMENTS_INIT)
         self.assertEqual(
             imports_in(branch.body),
-            {"payment_return", "provider_billing", "provider_routing", "saas"},
+            {"payment_return", "provider_billing", "provider_routing", "saas", "checkout"},
         )
         legacy_imports = imports_in(branch.orelse)
         self.assertTrue(
@@ -93,6 +93,7 @@ class SaasRouterSurfaceTests(unittest.TestCase):
             order.index("provider_routing_router"),
             order.index("saas_router"),
         )
+        self.assertLess(order.index("checkout_router"), order.index("provider_routing_router"))
 
     def test_trial_and_tariff_routers_exist_only_in_legacy_branch(self) -> None:
         branch = first_mode_if(USER_INIT, negated=True)

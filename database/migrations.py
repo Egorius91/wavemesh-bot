@@ -34,7 +34,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 INITIAL_VERSION = 21
 
 # Текущая версия схемы БД (инкрементируется при добавлении новых миграций)
-LATEST_VERSION = 46
+LATEST_VERSION = 47
 
 
 def _my_keys_item_template() -> str:
@@ -1494,6 +1494,11 @@ def migration_46(conn):
     ensure_schema(conn)
 
 
+def migration_47(conn):
+    from database.checkout_ui import ensure_schema
+    ensure_schema(conn)
+
+
 MIGRATIONS = {
     22: migration_22,
     23: migration_23,
@@ -1520,6 +1525,7 @@ MIGRATIONS = {
     44: migration_44,
     45: migration_45,
     46: migration_46,
+    47: migration_47,
 }
 
 
