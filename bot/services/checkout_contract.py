@@ -79,8 +79,8 @@ def intent_terms(payload):
 
 def dispatch_payload(payload):
     intent_terms(payload)
-    # ONE_TIME economics are local recovery metadata, never recurring consent.
-    return {key: value for key, value in payload.items() if key != "confirmed_terms"}
+    # Send the persisted confirmation, never today's catalog or recurring consent.
+    return dict(payload)
 
 
 def snapshot(value, *, current=False):
