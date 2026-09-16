@@ -118,18 +118,28 @@ class CheckoutJournal(Journal):
             if row["phase"] == "DISPATCHED":
                 conn.execute("UPDATE checkout_intents SET phase='REJECTED' WHERE id=?", (operation_id,))
 
-    def observe(self, operation_id, actor, scope, owner, original, *, rejected_missing=False):
+    def prove_rejected(self, operation_id, actor, scope, owner):
+        # Call only after the original-key SaaS proof. Retain the row and all
+        # callback aliases; a delayed callback can never allocate or dispatch again.
+        with self.transaction() as conn:
+            row = self._owned(conn.execute("SELECT * FROM checkout_intents WHERE id=?", (operation_id,)).fetchone(), actor, scope, owner)
+            if (row["order_id"] is not None or row["phase"] not in {"DISPATCHED", "REJECTED", "TERMINAL"}
+                    or row["phase"] == "TERMINAL" and row["payment_status"] != "NOT_ADMITTED"):
+                raise JournalConflict("CHECKOUT_REJECTION_CONTRADICTED")
+            conn.execute("UPDATE checkout_intents SET phase='TERMINAL',payment_status='NOT_ADMITTED' WHERE id=?", (operation_id,))
+
+    def observe(self, operation_id, actor, scope, owner, original):
         with self.transaction() as conn:
             row = self._owned(conn.execute("SELECT * FROM checkout_intents WHERE id=?", (operation_id,)).fetchone(), actor, scope, owner)
             if original is None:
-                if rejected_missing and row["phase"] == "REJECTED" and row["order_id"] is None:
-                    conn.execute("UPDATE checkout_intents SET phase='TERMINAL',payment_status='NOT_ADMITTED' WHERE id=?", (operation_id,))
+                if row["order_id"] is not None:
+                    raise JournalConflict("CHECKOUT_ORIGINAL_MISSING")
                 return
             payload = json.loads(row["payload"])
             if (original["terms"]["tariff_id"] != payload["tariff_id"] or original["terms"]["recurring_consent"] != payload["recurring_consent"]
                     or original["purchase_kind"] != ("RENEWAL" if payload.get("access_id") else "NEW_ACCESS")
                     or row["order_id"] is not None and row["order_id"] != original["order_id"]
-                    or row["phase"] in {"PREPARED", "CANCELLED"}):
+                    or row["phase"] in {"PREPARED", "CANCELLED"} or row["payment_status"] == "NOT_ADMITTED"):
                 raise JournalConflict("CHECKOUT_ORIGINAL_CHANGED")
             if row["phase"] == "TERMINAL" and original["payment_status"] not in {"PAID", "CANCELLED", "REFUNDED"}:
                 raise JournalConflict("CHECKOUT_STATUS_REGRESSED")

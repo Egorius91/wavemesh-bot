@@ -33,9 +33,14 @@ recovery protocol; elapsed time and a 404 are not proof of non-dispatch.
 
 `recover` uses original-key and current-operation GETs. It validates bounded
 snapshots and matches original terms/purchase kind before recording terminal
-evidence. A received CHECKOUT_ADMISSION_REQUIRED is durably retained; only this
-receipt and authenticated original-key CHECKOUT_NOT_FOUND can resolve an
-unadmitted attempt. Lost rejection without receipt remains unknown. Unknown or
+evidence. A received CHECKOUT_ADMISSION_REQUIRED is retained only as a receipt.
+After original-key CHECKOUT_NOT_FOUND, GET `/bot/orders/checkout/rejection`
+must return the exact version-1 INITIAL_SAVED / NOT_ADMITTED / final=true /
+allowNewCreate=false proof before SQLite commits TERMINAL / NOT_ADMITTED.
+This also resolves a lost refusal response without replaying POST. The original
+row and callback aliases remain permanently; a later Order cannot rebind them.
+An already observed Order cannot disappear or acquire rejection proof. Missing,
+unavailable or malformed proof keeps the dispatch unresolved. Unknown or
 contradictory state cannot allocate a new local operation. A fresh next purchase
 requires a new explicit action and exactly the verified terminal predecessor.
 
