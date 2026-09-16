@@ -42,7 +42,8 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
         self.journal = CheckoutJournal(self.connect)
         self.owner, self.current, self.originals = OWNER, None, {}
         self.posts, self.requests, self.catalog = [], [], [deepcopy(TARIFF)]
-        self.post_mode, self.discovery_status = "success", 200
+        self.post_mode, self.discovery_status, self.original_status = "success", 200, 200
+        self.reject_posts, self.reject_mode = [], "success"
         self.rejections, self.proof_status, self.proof_body = set(), 200, PROOF.copy()
         self.accesses = []
         self.app = web.Application()
@@ -80,13 +81,37 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
             return web.json_response(self.current or {"version": 1, "current": None, "allowNewCreate": False}, status=self.discovery_status)
         if request.path == "/bot/orders/checkout/status":
             self.assertEqual(request.query["user_id"], self.owner)
+            if self.original_status == 503:
+                return web.json_response({"code": "UNAVAILABLE"}, status=503)
             original = self.originals.get(request.headers["Idempotency-Key"])
             return web.json_response(original or {"code": "CHECKOUT_NOT_FOUND"}, status=200 if original else 404)
         if request.path == "/bot/orders/checkout/rejection":
             self.assertEqual(request.query["user_id"], self.owner)
+            if self.proof_status == 503:
+                return web.json_response({"code": "UNAVAILABLE"}, status=503)
             if request.headers["Idempotency-Key"] not in self.rejections or self.proof_status == 404:
                 return web.json_response({"code": "CHECKOUT_NOT_FOUND"}, status=404)
             return web.json_response(self.proof_body, status=self.proof_status)
+        if request.path == "/bot/orders/checkout/reject-unadmitted" and request.method == "POST":
+            body = await request.json()
+            key = request.headers["Idempotency-Key"]
+            conn = self.connect()
+            try:
+                row = conn.execute("SELECT * FROM checkout_intents WHERE request_key=?", (key,)).fetchone()
+                self.assertEqual(body, json.loads(row["payload"]) | {"return_channel": "TELEGRAM"})
+                self.assertIn(row["phase"], {"DISPATCHED", "REJECTED"})
+            finally:
+                conn.close()
+            self.reject_posts.append((key, body))
+            if self.reject_mode == "order-race":
+                self.current = wire()
+                self.originals[key] = self.current
+                return web.json_response({"code": "CHECKOUT_ALREADY_ADMITTED"}, status=409)
+            if self.reject_mode != "response-only":
+                self.rejections.add(key)
+            if self.reject_mode == "lost":
+                request.transport.close()
+            return web.json_response(self.proof_body)
         if request.path == "/bot/orders" and request.method == "POST":
             body = await request.json()
             key = request.headers["Idempotency-Key"]
@@ -408,6 +433,114 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(JournalConflict):
             self.journal.prove_rejected(row["id"], 123, connection_scope(self.client), OWNER)
         self.assertEqual(self.journal.active(123, connection_scope(self.client), OWNER)["order_id"], "order-fixture-1")
+
+    async def test_explicit_reject_fences_unknown_original_with_immutable_body_and_key(self):
+        row = await self.prepare()
+        scope = connection_scope(self.client)
+        self.assertTrue(self.journal.claim_confirmed(row["id"], 123, scope, OWNER))
+        result = await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(result["operation"]["payment_status"], "NOT_ADMITTED")
+        self.assertFalse(result["unresolved"])
+        self.assertEqual(self.posts, [])
+        self.assertEqual(self.reject_posts, [(row["request_key"], json.loads(row["payload"]) | {"return_channel": "TELEGRAM"})])
+        self.assertIn(("GET", "/bot/orders/checkout/rejection"), self.requests)
+        await self.runner.reject_unadmitted(123, row["id"])
+        await self.runner.confirm(123, row["id"])
+        self.assertEqual(len(self.reject_posts), 1)
+        self.assertEqual(self.posts, [])
+        self.assertEqual((await self.prepare())["id"], row["id"])
+        new = await self.prepare("callback-next-123")
+        self.assertNotEqual(new["id"], row["id"])
+        self.assertEqual(new["phase"], "PREPARED")
+
+    async def test_lost_reject_response_uses_get_proof(self):
+        row = await self.prepare()
+        self.journal.claim_confirmed(row["id"], 123, connection_scope(self.client), OWNER)
+        self.reject_mode = "lost"
+        result = await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(result["operation"]["payment_status"], "NOT_ADMITTED")
+        self.assertEqual(len(self.reject_posts), 1)
+        self.assertEqual(self.posts, [])
+
+    async def test_one_time_default_provider_reject_keeps_provider_absent(self):
+        self.catalog[0]["billing_mode"] = "ONE_TIME"
+        self.proof_body = PROOF | {"checkoutKind": "ONE_TIME"}
+        row = await self.prepare()
+        self.journal.claim_confirmed(row["id"], 123, connection_scope(self.client), OWNER)
+        result = await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(result["operation"]["payment_status"], "NOT_ADMITTED")
+        self.assertEqual(self.reject_posts[0][0], row["request_key"])
+        self.assertNotIn("provider", self.reject_posts[0][1])
+        self.assertIn("confirmed_terms", self.reject_posts[0][1])
+
+    async def test_response_only_or_missing_proof_never_clears_attempt(self):
+        row = await self.prepare()
+        self.journal.claim_confirmed(row["id"], 123, connection_scope(self.client), OWNER)
+        self.reject_mode = "response-only"
+        result = await self.runner.reject_unadmitted(123, row["id"])
+        self.assertTrue(result["unresolved"])
+        self.assertEqual(result["operation"]["phase"], "DISPATCHED")
+        self.assertEqual(self.posts, [])
+        self.proof_status = 503
+        with self.assertRaises(InternalApiError):
+            await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(len(self.reject_posts), 1)
+
+    async def test_readback_outage_and_invalid_proof_never_clear(self):
+        row = await self.prepare()
+        self.journal.claim_confirmed(row["id"], 123, connection_scope(self.client), OWNER)
+        self.original_status = 503
+        with self.assertRaises(InternalApiError):
+            await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(self.reject_posts, [])
+        self.original_status = 200
+        self.discovery_status = 503
+        with self.assertRaises(InternalApiError):
+            await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(self.reject_posts, [])
+        self.discovery_status = 200
+        self.proof_body = PROOF | {"final": 1}
+        with self.assertRaises(InternalApiError):
+            await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(self.journal.owned(row["id"], 123, connection_scope(self.client), OWNER)["phase"], "DISPATCHED")
+
+    async def test_late_order_is_recovered_without_reject_post(self):
+        row = await self.prepare()
+        self.journal.claim_confirmed(row["id"], 123, connection_scope(self.client), OWNER)
+        self.current = wire()
+        self.originals[row["request_key"]] = self.current
+        result = await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(result["original"]["order_id"], "order-fixture-123")
+        self.assertEqual(result["operation"]["order_id"], "order-fixture-123")
+        self.assertEqual(self.reject_posts, [])
+        self.originals.clear()
+        with self.assertRaises(JournalConflict):
+            await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(self.reject_posts, [])
+
+    async def test_order_arriving_during_reject_is_recovered_without_fence(self):
+        row = await self.prepare()
+        self.journal.claim_confirmed(row["id"], 123, connection_scope(self.client), OWNER)
+        self.reject_mode = "order-race"
+        result = await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(result["original"]["order_id"], "order-fixture-123")
+        self.assertEqual(len(self.reject_posts), 1)
+        self.assertEqual(result["operation"]["order_id"], "order-fixture-123")
+
+    async def test_reject_checks_actor_owner_and_scope_before_post(self):
+        row = await self.prepare()
+        self.journal.claim_confirmed(row["id"], 123, connection_scope(self.client), OWNER)
+        with patch.object(self.client, "get_telegram_dashboard", return_value={"user": {"user_id": OWNER}, "accesses": []}):
+            with self.assertRaises(JournalConflict):
+                await self.runner.reject_unadmitted(456, row["id"])
+        self.owner = "changed-owner-123"
+        with self.assertRaises(JournalConflict):
+            await self.runner.reject_unadmitted(123, row["id"])
+        self.owner = OWNER
+        with patch.object(self.runner, "context", return_value=(OWNER, "changed-client-scope", {})):
+            with self.assertRaises(JournalConflict):
+                await self.runner.reject_unadmitted(123, row["id"])
+        self.assertEqual(self.reject_posts, [])
 
     async def test_rejected_tombstone_cannot_bind_a_later_order(self):
         row = await self.prepare()

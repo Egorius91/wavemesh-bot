@@ -88,6 +88,40 @@ class CheckoutCoordinator:
         self.journal.cancel(operation_id, actor, scope, owner)
         return self.journal.owned(operation_id, actor, scope, owner)
 
+    async def reject_unadmitted(self, actor, operation_id):
+        """Explicitly fence an unknown original attempt, then trust only GET readback."""
+        owner, scope, _ = await self.context(actor)
+        row = self.journal.owned(operation_id, actor, scope, owner)
+        if row["phase"] == "TERMINAL" and row["payment_status"] == "NOT_ADMITTED" and row["order_id"] is None:
+            return await self.recover(actor, operation_id)
+        if row["phase"] not in {"DISPATCHED", "REJECTED"} or row["order_id"] is not None:
+            raise JournalConflict("CHECKOUT_REJECTION_NOT_AVAILABLE")
+
+        # Both reads must succeed before a POST. A missing original alone is not
+        # proof that the create request was never admitted.
+        result = await self.recover(actor, operation_id)
+        row = result["operation"]
+        if result["original"] or row["phase"] == "TERMINAL":
+            return result
+        if row["phase"] not in {"DISPATCHED", "REJECTED"} or row["order_id"] is not None:
+            raise JournalConflict("CHECKOUT_REJECTION_NOT_AVAILABLE")
+
+        fresh_owner, fresh_scope, _ = await self.context(actor)
+        if (fresh_owner, fresh_scope) != (owner, scope):
+            raise JournalConflict("CHECKOUT_OWNER_CHANGED")
+        row = self.journal.owned(operation_id, actor, scope, owner)
+        if row["phase"] not in {"DISPATCHED", "REJECTED"} or row["order_id"] is not None:
+            raise JournalConflict("CHECKOUT_REJECTION_NOT_AVAILABLE")
+        try:
+            await self.client.reject_unadmitted_checkout(
+                original_payload=dispatch_payload(json.loads(row["payload"])),
+                idempotency_key=row["request_key"],
+            )
+        except InternalApiError:
+            # Even a reported failure may have committed. Reconcile below.
+            pass
+        return await self.recover(actor, operation_id)
+
     async def recover(self, actor, operation_id=None):
         owner, scope, _ = await self.context(actor)
         row = (self.journal.owned(operation_id, actor, scope, owner) if operation_id

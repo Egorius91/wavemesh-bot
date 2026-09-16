@@ -15,6 +15,15 @@ checkout. ONE_TIME shows a single payment without autorenewal and requires
 Recovery uses GET and does not require catalog/sales availability. Another Web
 checkout is discoverable without a Bot key. Unknown local dispatch is retained
 and cannot be replaced by a new tariff/provider or an empty server lookup.
+For an unknown dispatched attempt with no observed original Order, the private
+status view offers an explicit "Завершить попытку" action. It rechecks the
+original Order, current checkout and rejection receipt before sending the
+original immutable Bot request and idempotency key to SaaS's reject-unadmitted
+endpoint. The POST response never closes the local intent: only a subsequent
+validated GET rejection receipt does. An admitted Order is recovered instead;
+readback outages or missing proof leave the attempt unresolved. After proven
+rejection, a new purchase requires fresh selection and confirmation. The older
+PREPARED-only local cancellation remains a separate action.
 
 New purchase requires fresh terminal readback, an explicit next action, another
 tariff selection and new consent; its stored expected predecessor cannot silently

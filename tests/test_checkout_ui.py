@@ -43,14 +43,15 @@ class CheckoutUITests(unittest.IsolatedAsyncioTestCase):
         conn.commit()
         conn.close()
         self.journal, self.views = CheckoutJournal(self.connect), CheckoutUIJournal(self.connect)
-        self.owner, self.current, self.originals, self.posts = OWNER, None, {}, []
+        self.owner, self.current, self.originals, self.posts, self.reject_posts = OWNER, None, {}, [], []
         self.fail_catalog, self.fail_current, self.lost = False, False, False
         self.tariffs = [deepcopy(TARIFF)]
         self.client = SimpleNamespace(base_url="https://fixture.invalid", tenant_id="tenant-fixture", token="fixture-only",
             get_telegram_dashboard=AsyncMock(side_effect=self.dashboard), get_current_checkout=AsyncMock(side_effect=self.read_current),
             get_checkout=AsyncMock(side_effect=self.read_original), list_tariffs=AsyncMock(side_effect=self.catalog),
             get_checkout_rejection=AsyncMock(return_value=False),
-            create_order=AsyncMock(side_effect=self.create))
+            create_order=AsyncMock(side_effect=self.create),
+            reject_unadmitted_checkout=AsyncMock(side_effect=self.reject))
         self.runner = CheckoutCoordinator(self.client, self.journal)
         self.sent = AsyncMock()
         self.answer = AsyncMock()
@@ -111,6 +112,11 @@ class CheckoutUITests(unittest.IsolatedAsyncioTestCase):
         if self.lost:
             raise InternalApiError("timeout", code="INTERNAL_API_TIMEOUT")
         return {"order_id": self.current["orderId"], "checkout_url": self.current["checkoutUrl"], "status": "pending"}
+
+    async def reject(self, **payload):
+        self.reject_posts.append(payload)
+        self.client.get_checkout_rejection.return_value = True
+        return True
 
     async def feed(self, data="buy_key", *, actor=123, chat=123, chat_type="private", message_id=10, callback_id="tap-one", inline=None):
         message = Message(message_id=message_id, date=datetime.now(timezone.utc), chat=Chat(id=chat, type=chat_type),
@@ -288,6 +294,58 @@ class CheckoutUITests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("wmco_next:", str(self.last()[1]))
         await self.feed(confirm)
         self.assertEqual(self.posts, [])
+
+    async def test_unknown_dispatch_exposes_explicit_reject_and_old_confirm_stays_dead(self):
+        choice, confirm = await self.prepared()
+        row = self.journal.active(123, connection_scope(self.client), OWNER)
+        self.journal.claim_confirmed(row["id"], 123, connection_scope(self.client), OWNER)
+        await self.feed("buy_key")
+        text, buttons = self.last()
+        self.assertIn("Если заказ по этой попытке не появился", text)
+        reject = self.callback("wmco_reject:")
+        self.assertEqual(next(b.text for b in buttons if b.callback_data == reject), "Завершить попытку")
+        await self.feed(reject)
+        self.assertIn("Покупка не создана", self.last()[0])
+        self.assertEqual(len(self.reject_posts), 1)
+        self.assertEqual(self.reject_posts[0]["idempotency_key"], row["request_key"])
+        self.assertEqual(self.reject_posts[0]["original_payload"], json.loads(row["payload"]))
+        await self.feed(reject, callback_id="duplicate-tap")
+        await self.feed(confirm, callback_id="late-confirm")
+        await self.feed(choice, callback_id="late-choice")
+        self.assertEqual(len(self.reject_posts), 1)
+        self.assertEqual(self.posts, [])
+        await self.feed("buy_key")
+        self.assertIn("Выберите тариф", self.last()[0])
+
+    async def test_reject_response_without_get_proof_keeps_unknown_and_restricts_callbacks(self):
+        _, _ = await self.prepared()
+        row = self.journal.active(123, connection_scope(self.client), OWNER)
+        self.journal.claim_confirmed(row["id"], 123, connection_scope(self.client), OWNER)
+        self.client.reject_unadmitted_checkout.side_effect = AsyncMock(return_value=True)
+        await self.feed("buy_key")
+        reject = self.callback("wmco_reject:")
+        for kw in ({"actor": 456, "chat": 456}, {"chat": -123, "chat_type": "group"}, {"inline": "inline-fixture"}):
+            await self.feed(reject, **kw)
+        self.client.reject_unadmitted_checkout.assert_not_awaited()
+        await self.feed(reject)
+        self.assertIn("Статус оплаты пока", self.last()[0])
+        self.assertEqual(self.journal.active(123, connection_scope(self.client), OWNER)["phase"], "DISPATCHED")
+        self.client.get_checkout_rejection.return_value = True
+        await self.feed("wmco_current")
+        self.assertIn("Покупка не создана", self.last()[0])
+
+    async def test_late_order_removes_reject_action_without_post(self):
+        _, _ = await self.prepared()
+        row = self.journal.active(123, connection_scope(self.client), OWNER)
+        self.journal.claim_confirmed(row["id"], 123, connection_scope(self.client), OWNER)
+        await self.feed("buy_key")
+        reject = self.callback("wmco_reject:")
+        self.current = wire()
+        self.originals[row["request_key"]] = self.current
+        await self.feed(reject)
+        self.assertIn("Ожидаем подтверждения", self.last()[0])
+        self.assertNotIn("wmco_reject:", str(self.last()[1]))
+        self.assertEqual(self.reject_posts, [])
 
     async def test_local_cancel_does_not_reuse_old_confirmation(self):
         choice, confirm = await self.prepared()

@@ -462,6 +462,25 @@ class WaveMeshInternalApiClient:
         except ValueError as error:
             raise InternalApiError("Invalid checkout rejection", code="INTERNAL_API_INVALID_RESPONSE") from error
 
+    async def reject_unadmitted_checkout(self, *, original_payload: dict[str, Any], idempotency_key: str) -> bool:
+        """Fence the exact original Bot checkout intent; the caller must GET proof afterward."""
+        from bot.services.checkout_contract import dispatch_payload, rejection_proof, request_key
+
+        try:
+            request_key(idempotency_key)
+            payload = dispatch_payload(original_payload)
+        except ValueError as error:
+            raise InternalApiError("Invalid checkout intent", code="INTERNAL_API_INVALID_REQUEST") from error
+        try:
+            result = await self._request(
+                "POST", "bot/orders/checkout/reject-unadmitted",
+                json_body=payload | {"return_channel": "TELEGRAM"},
+                idempotency_key=idempotency_key,
+            )
+            return rejection_proof(result, payload["billing_mode"])
+        except ValueError as error:
+            raise InternalApiError("Invalid checkout rejection", code="INTERNAL_API_INVALID_RESPONSE") from error
+
     async def _checkout_read(self, user_id, idempotency_key=None):
         from bot.services.checkout_contract import identity, request_key, snapshot
         try:

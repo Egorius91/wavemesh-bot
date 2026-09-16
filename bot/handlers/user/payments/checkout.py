@@ -127,6 +127,11 @@ async def render(event, result, runner, *, key_id=None, expose_url=False):
         elif not row:
             text = "Текущая оплата подписки не найдена."
             add(builder, "Выбрать тариф", "buy_key")
+        if (row and row["phase"] in {"DISPATCHED", "REJECTED"} and row["order_id"] is None
+                and result.get("original") is None and result.get("unresolved")):
+            text += ("\n\nЕсли заказ по этой попытке не появился, можно завершить попытку. "
+                     "Сервис ещё раз проверит исходный запрос; после подтверждённого отказа тариф потребуется выбрать заново.")
+            add(builder, "Завершить попытку", "wmco_reject:"+row["id"])
         add(builder, "Проверить оплату", "wmco_check:"+ref)
         if row and row["phase"] == "PREPARED":
             add(builder, "Отменить подтверждение", "wmco_cancel:"+row["id"])
@@ -248,14 +253,16 @@ async def action(event):
         if event.data == "wmco_current":
             await render(event, await runner.recover(actor), runner)
             return
-        match = re.fullmatch(r"wmco_(select|confirm|cancel|check|pay|next):([a-f0-9]{32})", event.data or "")
+        match = re.fullmatch(r"wmco_(select|confirm|cancel|reject|check|pay|next):([a-f0-9]{32})", event.data or "")
         if not match:
             raise JournalConflict("INVALID_CHECKOUT_CALLBACK")
         kind, ref = match.groups()
-        if kind in {"confirm", "cancel"}:
+        if kind in {"confirm", "cancel", "reject"}:
             if kind == "cancel":
                 await runner.cancel(actor, ref)
                 result = await runner.recover(actor, ref)
+            elif kind == "reject":
+                result = await runner.reject_unadmitted(actor, ref)
             else:
                 result = await runner.confirm(actor, ref)
             await render(event, result, runner)
