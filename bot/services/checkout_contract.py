@@ -10,6 +10,16 @@ class CheckoutContractError(ValueError):
 TERMINAL = frozenset({"PAID", "CANCELLED", "REFUNDED"})
 
 
+def rejection_proof(value):
+    if (not isinstance(value, dict)
+            or set(value) != {"version", "checkoutKind", "outcome", "final", "allowNewCreate"}
+            or type(value.get("version")) is not int or value["version"] != 1
+            or value.get("checkoutKind") != "INITIAL_SAVED" or value.get("outcome") != "NOT_ADMITTED"
+            or value.get("final") is not True or value.get("allowNewCreate") is not False):
+        raise CheckoutContractError("INVALID_CHECKOUT_REJECTION")
+    return True
+
+
 def identity(value):
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", value):
         raise CheckoutContractError("INVALID_CHECKOUT_IDENTITY")

@@ -438,6 +438,25 @@ class WaveMeshInternalApiClient:
     async def get_checkout(self, user_id: str, idempotency_key: str) -> dict[str, Any]:
         return await self._checkout_read(user_id, idempotency_key)
 
+    async def get_checkout_rejection(self, user_id: str, idempotency_key: str) -> bool:
+        from bot.services.checkout_contract import identity, rejection_proof, request_key
+
+        try:
+            identity(user_id)
+            request_key(idempotency_key)
+        except ValueError as error:
+            raise InternalApiError("Invalid checkout identity", code="INTERNAL_API_INVALID_REQUEST") from error
+        try:
+            result = await self._request("GET", f"bot/orders/checkout/rejection?user_id={user_id}", idempotency_key=idempotency_key)
+        except InternalApiError as error:
+            if error.status == 404 and error.code == "CHECKOUT_NOT_FOUND":
+                return False
+            raise
+        try:
+            return rejection_proof(result)
+        except ValueError as error:
+            raise InternalApiError("Invalid checkout rejection", code="INTERNAL_API_INVALID_RESPONSE") from error
+
     async def _checkout_read(self, user_id, idempotency_key=None):
         from bot.services.checkout_contract import identity, request_key, snapshot
         try:

@@ -105,7 +105,13 @@ class CheckoutCoordinator:
         if original and not current:
             raise JournalConflict("CHECKOUT_CURRENT_MISSING")
         if row:
-            self.journal.observe(row["id"], actor, scope, owner, original, rejected_missing=missing)
+            if connection_scope(self.client) != scope:
+                raise JournalConflict("CHECKOUT_OWNER_CHANGED")
+            self.journal.observe(row["id"], actor, scope, owner, original)
+            if missing and await self.client.get_checkout_rejection(owner, row["request_key"]):
+                if connection_scope(self.client) != scope:
+                    raise JournalConflict("CHECKOUT_OWNER_CHANGED")
+                self.journal.prove_rejected(row["id"], actor, scope, owner)
             row = self.journal.owned(row["id"], actor, scope, owner)
         unresolved = bool(row and row["phase"] not in {"TERMINAL", "CANCELLED", "PREPARED"}
                           and (not original or current["order_id"] != original["order_id"]))

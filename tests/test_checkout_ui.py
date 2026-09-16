@@ -49,6 +49,7 @@ class CheckoutUITests(unittest.IsolatedAsyncioTestCase):
         self.client = SimpleNamespace(base_url="https://fixture.invalid", tenant_id="tenant-fixture", token="fixture-only",
             get_telegram_dashboard=AsyncMock(side_effect=self.dashboard), get_current_checkout=AsyncMock(side_effect=self.read_current),
             get_checkout=AsyncMock(side_effect=self.read_original), list_tariffs=AsyncMock(side_effect=self.catalog),
+            get_checkout_rejection=AsyncMock(return_value=False),
             create_order=AsyncMock(side_effect=self.create))
         self.runner = CheckoutCoordinator(self.client, self.journal)
         self.sent = AsyncMock()
@@ -153,6 +154,29 @@ class CheckoutUITests(unittest.IsolatedAsyncioTestCase):
         await self.feed("buy_key")
         self.assertEqual(len(self.posts), 1)
         self.assertNotIn("wmco_confirm:", str(self.last()[1]))
+
+    async def test_lost_rejection_proof_restores_ui_without_reusing_consent(self):
+        choice, confirm = await self.prepared()
+        async def lost_rejection(**payload):
+            self.posts.append(payload)
+            self.current = wire("competing-order-123", "PAID")
+            raise InternalApiError("timeout", code="INTERNAL_API_TIMEOUT")
+        self.client.create_order.side_effect = lost_rejection
+        self.client.get_checkout_rejection.return_value = True
+        await self.feed(confirm)
+        self.assertNotIn("Статус оплаты пока", self.last()[0])
+        self.assertIn("Оплата подтверждена", self.last()[0])
+        await self.feed(choice)
+        await self.feed(confirm)
+        self.assertEqual(len(self.posts), 1)
+        await self.feed(self.callback("wmco_next:"))
+        await self.feed(self.callback("wmco_select:"))
+        self.assertIn("Подтвердите подписку", self.last()[0])
+        self.assertEqual(len(self.posts), 1)
+        self.client.create_order.side_effect = self.create
+        await self.feed(self.callback("wmco_confirm:"))
+        self.assertEqual(len(self.posts), 2)
+        self.assertNotEqual(self.posts[0]["idempotency_key"], self.posts[1]["idempotency_key"])
 
     async def test_recovery_precedes_broken_catalog_and_new_tariff(self):
         _, confirm = await self.prepared()

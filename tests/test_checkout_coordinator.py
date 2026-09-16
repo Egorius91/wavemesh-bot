@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from aiohttp import web
 
-from bot.services.checkout_contract import CheckoutContractError, snapshot
+from bot.services.checkout_contract import CheckoutContractError, rejection_proof, snapshot
 from bot.services.checkout_coordinator import CheckoutCoordinator
 from bot.services.internal_api import InternalApiError, WaveMeshInternalApiClient
 from database.admin_provisioning import JournalConflict, connection_scope
@@ -20,6 +20,7 @@ from database.checkout_intents import CheckoutJournal, ensure_schema
 OWNER = "user-fixture-123"
 TARIFF = {"tariff_id": "tariff-fixture-123", "name": "Original", "billing_mode": "RECURRING",
           "price_rub": 299, "duration_days": 30, "device_limit": 2, "traffic_limit_gb": None}
+PROOF = {"version": 1, "checkoutKind": "INITIAL_SAVED", "outcome": "NOT_ADMITTED", "final": True, "allowNewCreate": False}
 
 
 def wire(order="order-fixture-123", status="PENDING"):
@@ -42,6 +43,7 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
         self.owner, self.current, self.originals = OWNER, None, {}
         self.posts, self.requests, self.catalog = [], [], [deepcopy(TARIFF)]
         self.post_mode, self.discovery_status = "success", 200
+        self.rejections, self.proof_status, self.proof_body = set(), 200, PROOF.copy()
         self.accesses = []
         self.app = web.Application()
         self.app.router.add_route("*", "/{path:.*}", self.handle)
@@ -80,6 +82,11 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(request.query["user_id"], self.owner)
             original = self.originals.get(request.headers["Idempotency-Key"])
             return web.json_response(original or {"code": "CHECKOUT_NOT_FOUND"}, status=200 if original else 404)
+        if request.path == "/bot/orders/checkout/rejection":
+            self.assertEqual(request.query["user_id"], self.owner)
+            if request.headers["Idempotency-Key"] not in self.rejections or self.proof_status == 404:
+                return web.json_response({"code": "CHECKOUT_NOT_FOUND"}, status=404)
+            return web.json_response(self.proof_body, status=self.proof_status)
         if request.path == "/bot/orders" and request.method == "POST":
             body = await request.json()
             key = request.headers["Idempotency-Key"]
@@ -94,6 +101,7 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
                 conn.close()
             self.posts.append((key, body))
             if self.post_mode in {"reject", "lost-reject"}:
+                self.rejections.add(key)
                 self.current = wire("competing-order-123")
                 if self.post_mode == "lost-reject":
                     request.transport.close()
@@ -261,12 +269,82 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
     async def test_lost_rejection_never_clears_unknown_original(self):
         row = await self.prepare()
         self.post_mode = "lost-reject"
+        self.proof_status = 404
         result = await self.runner.confirm(123, row["id"])
         self.assertTrue(result["unresolved"])
         self.current.update(paymentStatus="PAID", checkoutUrl=None)
         again = await self.prepare("callback-again-123", previous=self.current["orderId"])
         self.assertEqual(again["id"], row["id"])
         await self.runner.confirm(123, again["id"])
+        self.assertEqual(len(self.posts), 1)
+
+    async def test_lost_rejection_proof_survives_restart_aliases_and_requires_new_confirmation(self):
+        row = await self.prepare()
+        self.post_mode = "lost-reject"
+        result = await self.runner.confirm(123, row["id"])
+        self.assertFalse(result["unresolved"])
+        self.assertEqual(result["operation"]["payment_status"], "NOT_ADMITTED")
+        self.runner = CheckoutCoordinator(self.client, CheckoutJournal(self.connect))
+        self.assertEqual((await self.prepare())["id"], row["id"])
+        await self.runner.confirm(123, row["id"])
+        self.current.update(paymentStatus="PAID", checkoutUrl=None)
+        self.assertIsNone((await self.runner.prepare(123, "callback-next-123", TARIFF["tariff_id"]))["operation"])
+        new = await self.prepare("callback-next-123", previous=self.current["orderId"])
+        self.assertEqual(new["phase"], "PREPARED")
+        self.assertNotEqual(new["request_key"], row["request_key"])
+        self.assertEqual(len(self.posts), 1)
+        await self.runner.confirm(123, row["id"])
+        self.assertEqual(self.journal.active(123, connection_scope(self.client), OWNER)["id"], new["id"])
+        self.post_mode = "success"
+        await self.runner.confirm(123, new["id"])
+        self.assertEqual(len(self.posts), 2)
+
+    async def test_rejection_read_errors_preserve_original_until_proven(self):
+        row = await self.prepare()
+        self.post_mode, self.proof_status = "reject", 503
+        with self.assertRaises(InternalApiError):
+            await self.runner.confirm(123, row["id"])
+        for value in [PROOF | {"final": 1}, PROOF | {"version": True}, PROOF | {"extra": "unexpected"}]:
+            self.proof_status, self.proof_body = 200, value
+            with self.assertRaises(InternalApiError):
+                await self.runner.recover(123, row["id"])
+            self.assertEqual(self.journal.active(123, connection_scope(self.client), OWNER)["id"], row["id"])
+        self.proof_body = PROOF.copy()
+        self.assertFalse((await self.runner.recover(123, row["id"]))["unresolved"])
+        self.assertEqual(len(self.posts), 1)
+
+    async def test_proof_commit_failure_retains_dispatch_and_retry_is_read_only(self):
+        row = await self.prepare()
+        self.post_mode = "lost-reject"
+        with patch.object(self.journal, "prove_rejected", side_effect=sqlite3.OperationalError("fixture failure")):
+            with self.assertRaises(sqlite3.OperationalError):
+                await self.runner.confirm(123, row["id"])
+        self.assertEqual(self.journal.active(123, connection_scope(self.client), OWNER)["phase"], "DISPATCHED")
+        results = await asyncio.gather(self.runner.recover(123, row["id"]), self.runner.recover(123, row["id"]))
+        self.assertTrue(all(not r["unresolved"] for r in results))
+        self.assertEqual(len(self.posts), 1)
+
+    async def test_observed_order_cannot_disappear_even_with_rejection_proof(self):
+        row = await self.prepare()
+        await self.runner.confirm(123, row["id"])
+        self.originals.clear()
+        self.rejections.add(row["request_key"])
+        with self.assertRaises(JournalConflict):
+            await self.runner.recover(123, row["id"])
+        with self.assertRaises(JournalConflict):
+            self.journal.prove_rejected(row["id"], 123, connection_scope(self.client), OWNER)
+        self.assertEqual(self.journal.active(123, connection_scope(self.client), OWNER)["order_id"], "order-fixture-1")
+
+    async def test_rejected_tombstone_cannot_bind_a_later_order(self):
+        row = await self.prepare()
+        self.post_mode = "lost-reject"
+        await self.runner.confirm(123, row["id"])
+        self.originals[row["request_key"]] = wire(status="PAID")
+        with self.assertRaises(JournalConflict):
+            await self.runner.confirm(123, row["id"])
+        saved = self.journal.owned(row["id"], 123, connection_scope(self.client), OWNER)
+        self.assertEqual(saved["payment_status"], "NOT_ADMITTED")
+        self.assertIsNone(saved["order_id"])
         self.assertEqual(len(self.posts), 1)
 
     async def test_cancel_after_dispatch_cannot_release_original(self):
@@ -321,6 +399,13 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_rejection_proof_requires_exact_version_kind_and_boolean_finality(self):
+        self.assertTrue(rejection_proof(PROOF))
+        for change in [{"version": True}, {"version": 2}, {"checkoutKind": "ONE_TIME"}, {"outcome": "UNKNOWN"},
+                       {"final": 1}, {"final": False}, {"allowNewCreate": 0}, {"allowNewCreate": True}, {"orderId": "other-order"}]:
+            with self.subTest(change=change), self.assertRaises(CheckoutContractError):
+                rejection_proof(PROOF | change)
+
     def test_malformed_snapshots_fail_closed(self):
         changes = [{"version": True}, {"allowNewCreate": True}, {"paymentStatus": "UNKNOWN"},
                    {"checkoutUrl": "https://user:secret@checkout.invalid"}, {"checkoutUrl": "https://"},
