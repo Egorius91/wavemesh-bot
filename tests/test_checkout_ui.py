@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 from bot.handlers.user.payments import checkout as ui
@@ -67,7 +67,9 @@ class CheckoutUITests(unittest.IsolatedAsyncioTestCase):
         self.fallback = AsyncMock()
         async def fallback(event):
             await self.fallback(event)
-        self.dp.callback_query.register(fallback)
+        fallback_router = Router()
+        fallback_router.callback_query.register(fallback)
+        self.dp.include_router(fallback_router)
 
     def connect(self):
         conn = sqlite3.connect(self.path)
