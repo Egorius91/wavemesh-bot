@@ -337,6 +337,8 @@ class WaveMeshInternalApiClient:
         return_url: str | None = None,
         return_channel: str | None = "TELEGRAM",
         idempotency_key: str | None = None,
+        recurring_consent: dict[str, Any] | None = None,
+        expected_previous_order_id: str | None = None,
     ) -> dict[str, Any]:
         """Создаёт SaaS order и запрашивает безопасный возврат в Telegram."""
         if return_url and return_channel:
@@ -387,6 +389,18 @@ class WaveMeshInternalApiClient:
             payload["return_url"] = return_url
         if normalized_return_channel:
             payload["return_channel"] = normalized_return_channel
+        if recurring_consent is not None or expected_previous_order_id is not None:
+            from bot.services.checkout_contract import consent, identity, request_key
+            try:
+                if normalized_billing_mode != "RECURRING" or normalized_provider != "YOOKASSA":
+                    raise ValueError("Invalid saved checkout provider")
+                request_key(idempotency_key)
+                if recurring_consent is not None:
+                    payload["recurring_consent"] = consent(recurring_consent)
+                if expected_previous_order_id is not None:
+                    payload["expected_previous_order_id"] = identity(expected_previous_order_id)
+            except ValueError as error:
+                raise InternalApiError("Invalid saved checkout intent", code="INTERNAL_API_INVALID_REQUEST") from error
 
         result = await self._request(
             "POST",
@@ -417,6 +431,27 @@ class WaveMeshInternalApiClient:
             )
 
         return result
+
+    async def get_current_checkout(self, user_id: str) -> dict[str, Any] | None:
+        return await self._checkout_read(user_id)
+
+    async def get_checkout(self, user_id: str, idempotency_key: str) -> dict[str, Any]:
+        return await self._checkout_read(user_id, idempotency_key)
+
+    async def _checkout_read(self, user_id, idempotency_key=None):
+        from bot.services.checkout_contract import identity, request_key, snapshot
+        try:
+            identity(user_id)
+            if idempotency_key is not None:
+                request_key(idempotency_key)
+        except ValueError as error:
+            raise InternalApiError("Invalid checkout identity", code="INTERNAL_API_INVALID_REQUEST") from error
+        path = "current" if idempotency_key is None else "status"
+        result = await self._request("GET", f"bot/orders/checkout/{path}?user_id={user_id}", idempotency_key=idempotency_key)
+        try:
+            return snapshot(result, current=idempotency_key is None)
+        except (ValueError, TypeError) as error:
+            raise InternalApiError("Invalid checkout snapshot", code="INTERNAL_API_INVALID_RESPONSE") from error
 
     async def resolve_payment_return(
         self,
