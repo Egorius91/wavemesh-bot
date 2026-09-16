@@ -338,6 +338,7 @@ class WaveMeshInternalApiClient:
         return_channel: str | None = "TELEGRAM",
         idempotency_key: str | None = None,
         recurring_consent: dict[str, Any] | None = None,
+        confirmed_terms: dict[str, Any] | None = None,
         expected_previous_order_id: str | None = None,
     ) -> dict[str, Any]:
         """Создаёт SaaS order и запрашивает безопасный возврат в Telegram."""
@@ -389,7 +390,7 @@ class WaveMeshInternalApiClient:
             payload["return_url"] = return_url
         if normalized_return_channel:
             payload["return_channel"] = normalized_return_channel
-        if recurring_consent is not None or expected_previous_order_id is not None:
+        if recurring_consent is not None or confirmed_terms is not None or expected_previous_order_id is not None:
             from bot.services.checkout_contract import consent, identity, request_key
             try:
                 if recurring_consent is not None and (normalized_billing_mode != "RECURRING" or normalized_provider != "YOOKASSA"):
@@ -397,6 +398,10 @@ class WaveMeshInternalApiClient:
                 request_key(idempotency_key)
                 if recurring_consent is not None:
                     payload["recurring_consent"] = consent(recurring_consent)
+                if confirmed_terms is not None:
+                    if normalized_billing_mode != "ONE_TIME":
+                        raise ValueError("Invalid one-time confirmation mode")
+                    payload["confirmed_terms"] = consent(confirmed_terms)
                 if expected_previous_order_id is not None:
                     payload["expected_previous_order_id"] = identity(expected_previous_order_id)
             except ValueError as error:

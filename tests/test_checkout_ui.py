@@ -299,7 +299,7 @@ class CheckoutUITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.posts[0]["billing_mode"], "ONE_TIME")
         self.assertNotIn("provider", self.posts[0])
         self.assertNotIn("recurring_consent", self.posts[0])
-        self.assertNotIn("confirmed_terms", self.posts[0])
+        self.assertEqual(self.posts[0]["confirmed_terms"]["amountRub"], 299)
         self.assertEqual(len(self.posts), 1)
 
     async def test_one_time_next_purchase_preserves_explicit_predecessor(self):

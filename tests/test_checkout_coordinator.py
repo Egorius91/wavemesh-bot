@@ -97,7 +97,7 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(row["phase"], "DISPATCHED")
                 self.assertIsNotNone(row["confirmed_at"])
                 stored = json.loads(row["payload"])
-                expected = {k: v for k, v in stored.items() if k != "confirmed_terms"}
+                expected = stored
                 self.assertEqual(body, expected | {"return_channel": "TELEGRAM"})
             finally:
                 conn.close()
@@ -136,6 +136,7 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
         self.catalog[0]["billing_mode"] = "ONE_TIME"
         row = await self.prepare()
         self.assertEqual(json.loads(row["payload"])["confirmed_terms"]["amountRub"], 299)
+        self.catalog[0]["price_rub"] = 999
         self.post_mode = "lost"
         await self.runner.confirm(123, row["id"])
         restarted = CheckoutCoordinator(self.client, CheckoutJournal(self.connect))
@@ -144,7 +145,8 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["original"]["provider"], "PLATEGA")
         self.assertEqual(len(self.posts), 1)
         body = self.posts[0][1]
-        self.assertEqual(set(body), {"user_id", "tariff_id", "billing_mode", "return_channel"})
+        self.assertEqual(set(body), {"user_id", "tariff_id", "billing_mode", "return_channel", "confirmed_terms"})
+        self.assertEqual(body["confirmed_terms"], json.loads(row["payload"])["confirmed_terms"])
         self.assertEqual(self.journal.owned(row["id"], 123, connection_scope(self.client), OWNER)["request_key"], row["request_key"])
 
     async def test_one_time_refusal_requires_its_kind_then_explicit_predecessor(self):
@@ -453,6 +455,14 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("checkout_url", serialized)
 
     async def test_invalid_input_cannot_start_http(self):
+        for value in ({}, {"version": 1, "amountRub": "299"}, TARIFF):
+            with self.assertRaises(InternalApiError):
+                await self.client.create_order(user_id=OWNER, tariff_id=TARIFF["tariff_id"], billing_mode="ONE_TIME",
+                                               confirmed_terms=value, idempotency_key="confirmation-fixture-key")
+        with self.assertRaises(InternalApiError):
+            await self.client.create_order(user_id=OWNER, tariff_id=TARIFF["tariff_id"], billing_mode="RECURRING",
+                                           confirmed_terms={"version": 1, "amountRub": 299, "durationDays": 30, "deviceLimit": 2, "trafficLimitGb": None},
+                                           idempotency_key="confirmation-fixture-key")
         for user in ("../escape", "user?wrong=123", "x"*129):
             with self.assertRaises(InternalApiError):
                 await self.client.get_current_checkout(user)

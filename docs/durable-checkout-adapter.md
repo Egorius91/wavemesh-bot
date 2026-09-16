@@ -51,8 +51,10 @@ payment or dispatched request. Bot authenticated undispatched-Order abandonment
 is not available in the SaaS contract yet; Web supports that separate action.
 
 Compatibility: historical recurring journal payloads stay unchanged. ONE_TIME
-stores confirmed economics locally and strips that metadata before HTTP; it never
-sends recurring consent and keeps SaaS automatic YooKassa/Platega routing. Both
+stores confirmed economics locally and sends the same `confirmed_terms` snapshot
+to SaaS before payment creation; it never sends recurring consent and keeps SaaS
+automatic YooKassa/Platega routing. The server must reject a missing or changed
+snapshot before creating a payable checkout. Both
 modes share the unresolved-intent index and immutable callback identity. Missing
 or contradictory stored billing mode fails closed. Readback must contain matching
 billingMode/provider/terms, requiring the coordinated SaaS #307 contract before
