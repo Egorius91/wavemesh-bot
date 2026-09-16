@@ -186,6 +186,43 @@ class CheckoutUITests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("fixture-private", self.last()[0])
         self.assertEqual(len(self.posts), 1)
 
+    async def test_lost_confirmation_refusal_requires_fresh_terms_and_new_explicit_confirm(self):
+        self.tariffs[0]["billing_mode"] = "ONE_TIME"
+        choice, confirm = await self.prepared()
+        async def refused(**payload):
+            self.posts.append(payload)
+            raise InternalApiError("timeout", code="INTERNAL_API_TIMEOUT")
+        self.client.create_order.side_effect = refused
+        self.client.get_checkout_rejection.return_value = True
+        await self.feed(confirm)
+        self.assertIn("Покупка не создана", self.last()[0])
+        await self.feed(choice)
+        await self.feed(confirm)
+        self.assertEqual(len(self.posts), 1)
+        self.tariffs[0]["price_rub"] = 499
+        await self.feed(self.callback("buy_key"))
+        await self.feed(self.callback("wmco_select:"))
+        self.assertIn("499 ₽", self.last()[0])
+        self.assertEqual(len(self.posts), 1)
+        self.client.create_order.side_effect = self.create
+        await self.feed(self.callback("wmco_confirm:"))
+        self.assertEqual(len(self.posts), 2)
+        self.assertEqual(self.posts[1]["confirmed_terms"]["amountRub"], 499)
+        self.assertNotEqual(self.posts[0]["idempotency_key"], self.posts[1]["idempotency_key"])
+
+    async def test_refused_renewal_returns_to_access_selection_instead_of_new_access(self):
+        self.tariffs[0]["billing_mode"] = "ONE_TIME"
+        context = ({"display_name": "Key"}, {"user_id": OWNER, "access": {"access_id": "access-fixture-123"}}, {})
+        with patch("bot.handlers.user.payments.saas._load_checkout_context", AsyncMock(return_value=context)):
+            await self.feed("key_renew:7")
+            await self.feed(self.callback("wmco_select:"))
+        self.client.create_order.side_effect = InternalApiError("timeout", code="INTERNAL_API_TIMEOUT")
+        self.client.get_checkout_rejection.return_value = True
+        await self.feed(self.callback("wmco_confirm:"))
+        self.assertIn("Покупка не создана", self.last()[0])
+        self.assertTrue(any(b.text == "Выбрать доступ для продления" and b.callback_data == "my_keys" for b in self.last()[1]))
+        self.assertFalse(any(b.callback_data == "buy_key" for b in self.last()[1]))
+
     async def test_remote_web_checkout_without_local_key_is_discovered(self):
         self.current = wire()
         self.fail_catalog = True
