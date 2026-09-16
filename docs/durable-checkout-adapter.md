@@ -1,8 +1,10 @@
 # Durable Telegram checkout adapter
 
-This is the adapter prerequisite for replacing the existing Telegram purchase
-handlers. It is not enabled by a new flag and is not called by those handlers yet.
-Do not activate sales or deploy it as a completed customer flow. SaaS remains the
+The private Telegram checkout router now uses this adapter for initial YooKassa
+recurring buy/renew/consent/recovery and explicit next-purchase actions. It runs
+before both old SaaS and provider-routing handlers, including old recurring
+callbacks. Do not activate sales or deploy it as an accepted commercial flow:
+actual SaaS/provider/runtime acceptance is still required. SaaS remains the
 only owner of Orders, Payments, subscriptions, paid periods and VPN desired state.
 
 `CheckoutCoordinator.prepare` resolves the current Telegram-to-SaaS owner, reads
@@ -42,9 +44,10 @@ payment or dispatched request. Bot authenticated undispatched-Order abandonment
 is not available in the SaaS contract yet; Web supports that separate action.
 
 Compatibility: create_order's new consent/predecessor fields are optional for old
-callers, and existing ONE_TIME payloads are unchanged. This does not make the old
-handlers safe: their callback.id-based identity and missing recurring consent
-must be replaced before activation. This adapter currently targets initial
+callers. ONE_TIME still uses SaaS default provider routing through its existing
+creation helper; source-choice identity is stable but this is not durable ONE_TIME
+admission/recovery. Recurring callbacks no longer reach the old creation helpers
+through the installed SaaS router. This adapter currently targets initial
 YooKassa recurring checkout, consuming SaaS #299/#300; ONE_TIME and Platega remain
 required and need shared admission/recovery. Platega recurring stays disabled.
 
@@ -54,9 +57,20 @@ POST, competing confirmations, restart/lost response, original callback replay,
 scope/owner/target change, stale predecessor, rejection/outage and invalid private
 snapshots. The API fixture is not real SaaS/PostgreSQL/provider acceptance.
 
-Next: wire private Telegram buy/renew/consent/status/next-purchase handlers to this
-coordinator; preserve original operations even when catalog/gates are unavailable;
-provide current-operation discovery without a local key; verify Python against
+Private UI references are persisted by migration47 and contain only owner/scope
+and original selection/operation IDs. The chosen amount/period/device/traffic and
+autorenewal consent are displayed separately before dispatch. Status distinguishes
+payment, configuration readiness and recurring activation. Payment URLs are only
+exposed after an explicit button action rechecks owner and original current Order;
+they are not persisted. An already-issued Telegram URL button cannot be recalled
+reliably from every old message; server payment/session policy remains necessary.
+
+Discovery precedes catalog reads, including old callbacks and missing local state.
+Catalog/transport failures produce bounded private retry/support text. PREPARING
+server abandonment directs the user to the same payment in the linked Web account
+or support; a local confirmation cancel never substitutes for that server action.
+
+Next: verify the actual Python client against
 actual SaaS + disposable PostgreSQL and Web/Bot cross-channel contention. Then
 separately prove real payment, VPN traffic, renewal, expiry/restoration, refund,
 support and Entry/Exit replacement. Source and CI do not prove runtime readiness.
