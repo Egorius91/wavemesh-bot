@@ -10,11 +10,13 @@ class CheckoutContractError(ValueError):
 TERMINAL = frozenset({"PAID", "CANCELLED", "REFUNDED"})
 
 
-def rejection_proof(value):
+def rejection_proof(value, billing_mode="RECURRING"):
     if (not isinstance(value, dict)
             or set(value) != {"version", "checkoutKind", "outcome", "final", "allowNewCreate"}
             or type(value.get("version")) is not int or value["version"] != 1
-            or value.get("checkoutKind") != "INITIAL_SAVED" or value.get("outcome") != "NOT_ADMITTED"
+            or billing_mode not in {"ONE_TIME", "RECURRING"}
+            or value.get("checkoutKind") != ("ONE_TIME" if billing_mode == "ONE_TIME" else "INITIAL_SAVED")
+            or value.get("outcome") != "NOT_ADMITTED"
             or value.get("final") is not True or value.get("allowNewCreate") is not False):
         raise CheckoutContractError("INVALID_CHECKOUT_REJECTION")
     return True
@@ -46,15 +48,39 @@ def consent(value):
 
 
 def tariff(value):
-    if not isinstance(value, dict) or value.get("billing_mode") != "RECURRING":
+    if not isinstance(value, dict) or value.get("billing_mode") not in {"RECURRING", "ONE_TIME"}:
         raise CheckoutContractError("INVALID_CHECKOUT_TARIFF")
     name = value.get("name")
     if not isinstance(name, str) or not name or len(name) > 300:
         raise CheckoutContractError("INVALID_CHECKOUT_TARIFF")
-    return {"tariff_id": identity(value.get("tariff_id")), "name": name, "recurring_consent": consent({
+    return {"tariff_id": identity(value.get("tariff_id")), "name": name, "billing_mode": value["billing_mode"], "recurring_consent": consent({
         "version": 1, "amountRub": value.get("price_rub"), "durationDays": value.get("duration_days"),
         "deviceLimit": value.get("device_limit"), "trafficLimitGb": value.get("traffic_limit_gb"),
     })}
+
+
+def intent_terms(payload):
+    """Validate the frozen local payload; historical recurring rows stay unchanged."""
+    if not isinstance(payload, dict) or payload.get("billing_mode") not in {"RECURRING", "ONE_TIME"}:
+        raise CheckoutContractError("INVALID_CHECKOUT_INTENT")
+    recurring = payload["billing_mode"] == "RECURRING"
+    field = "recurring_consent" if recurring else "confirmed_terms"
+    required = {"user_id", "tariff_id", "billing_mode", field} | ({"provider"} if recurring else set())
+    if not required <= set(payload) or set(payload) - required - {"provider", "access_id", "expected_previous_order_id"}:
+        raise CheckoutContractError("INVALID_CHECKOUT_INTENT")
+    provider = payload.get("provider")
+    if (recurring and provider != "YOOKASSA" or not recurring and "provider" in payload and provider not in {"YOOKASSA", "PLATEGA"}):
+        raise CheckoutContractError("INVALID_CHECKOUT_INTENT")
+    for key in ("user_id", "tariff_id", "access_id", "expected_previous_order_id"):
+        if key in payload:
+            identity(payload[key])
+    return consent(payload[field])
+
+
+def dispatch_payload(payload):
+    intent_terms(payload)
+    # ONE_TIME economics are local recovery metadata, never recurring consent.
+    return {key: value for key, value in payload.items() if key != "confirmed_terms"}
 
 
 def snapshot(value, *, current=False):
@@ -65,13 +91,16 @@ def snapshot(value, *, current=False):
             raise CheckoutContractError("INVALID_CHECKOUT_SNAPSHOT")
         return None
     order_id = identity(value.get("orderId"))
+    mode, provider = value.get("billingMode"), value.get("provider")
+    if mode not in {"RECURRING", "ONE_TIME"} or provider not in {"YOOKASSA", "PLATEGA"} or mode == "RECURRING" and provider != "YOOKASSA":
+        raise CheckoutContractError("INVALID_CHECKOUT_MODE")
     status = value.get("paymentStatus")
     if not isinstance(status, str) or status not in TERMINAL | {"PREPARING", "PENDING"}:
         raise CheckoutContractError("INVALID_CHECKOUT_STATUS")
     terms = value.get("terms")
     if not isinstance(terms, dict) or terms.get("purchaseKind") not in {"NEW_ACCESS", "RENEWAL"}:
         raise CheckoutContractError("INVALID_CHECKOUT_TERMS")
-    parsed = tariff({"billing_mode": "RECURRING", "tariff_id": terms.get("tariffId"), "name": terms.get("name"),
+    parsed = tariff({"billing_mode": mode, "tariff_id": terms.get("tariffId"), "name": terms.get("name"),
                      "price_rub": terms.get("amountRub"), "duration_days": terms.get("durationDays"),
                      "device_limit": terms.get("deviceLimit"), "traffic_limit_gb": terms.get("trafficLimitGb")})
     url = value.get("checkoutUrl", False)
@@ -96,6 +125,6 @@ def snapshot(value, *, current=False):
     if not isinstance(recurring, str) or len(recurring) > 64:
         raise CheckoutContractError("INVALID_CHECKOUT_RECURRING")
     # Return a new allow-listed view, never the entire upstream payload.
-    return {"order_id": order_id, "payment_status": status, "checkout_url": url, "terms": parsed,
+    return {"order_id": order_id, "billing_mode": mode, "provider": provider, "payment_status": status, "checkout_url": url, "terms": parsed,
             "purchase_kind": terms["purchaseKind"], "entitlement_status": entitlement["status"],
             "configuration_ready": access["configurationReady"] if access else False, "recurring": recurring}

@@ -1,4 +1,4 @@
-"""Private recurring checkout UX over the durable SaaS adapter."""
+"""Private shared checkout UX over the durable SaaS adapter."""
 import hashlib
 import json
 import re
@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from bot.services.checkout_contract import TERMINAL
+from bot.services.checkout_contract import TERMINAL, intent_terms
 from bot.services.checkout_coordinator import CheckoutCoordinator
 from bot.services.internal_api import internal_api_client
 from bot.services.private_chat import private_actor_id
@@ -70,15 +70,21 @@ async def render(event, result, runner, *, key_id=None, expose_url=False):
     builder = buttons()
     if row and row["phase"] == "PREPARED" and not result.get("unresolved"):
         payload = json.loads(row["payload"])
-        terms = payload["recurring_consent"]
+        terms = intent_terms(payload)
+        recurring = payload["billing_mode"] == "RECURRING"
         target = "Продление выбранного доступа" if payload.get("access_id") else "Новый доступ"
-        text = (f"<b>Подтвердите подписку</b>\n{escape_html(row['name'])}\n{target}.\n"
-                f"{terms['amountRub']} ₽ каждые {terms['durationDays']} дней через ЮKassa.\n"
+        heading = "Подтвердите подписку" if recurring else "Подтвердите разовую оплату"
+        price = (f"{terms['amountRub']} ₽ каждые {terms['durationDays']} дней через ЮKassa." if recurring
+                 else f"{terms['amountRub']} ₽ за {terms['durationDays']} дней без автопродления.")
+        text = (f"<b>{heading}</b>\n{escape_html(row['name'])}\n{target}.\n{price}\n"
                 f"Устройств: {terms['deviceLimit'] or 'без ограничения'}. "
-                f"Трафик: {str(terms['trafficLimitGb'])+' ГБ' if terms['trafficLimitGb'] else 'без ограничения'}.\n\n"
-                "Способ оплаты будет сохранён для автопродления. Его можно отключить в кабинете; оплаченный период сохранится.\n"
-                "Нажимая «Согласен и оплатить», вы соглашаетесь на сохранение способа оплаты и автопродление на этих условиях.")
-        add(builder, "Согласен и оплатить", "wmco_confirm:"+row["id"])
+                f"Трафик: {str(terms['trafficLimitGb'])+' ГБ' if terms['trafficLimitGb'] else 'без ограничения'}.\n\n")
+        if recurring:
+            text += ("Способ оплаты будет сохранён для автопродления. Его можно отключить в кабинете; оплаченный период сохранится.\n"
+                     "Нажимая «Согласен и оплатить», вы соглашаетесь на сохранение способа оплаты и автопродление на этих условиях.")
+        else:
+            text += "Платёжный сервис выберет WaveMesh. После окончания срока новых списаний не будет."
+        add(builder, "Согласен и оплатить" if recurring else "Подтвердить и оплатить", "wmco_confirm:"+row["id"])
         add(builder, "Отмена", "wmco_cancel:"+row["id"])
     else:
         ref = ui_journal().create(actor, scope, owner, "STATUS", {
@@ -92,7 +98,8 @@ async def render(event, result, runner, *, key_id=None, expose_url=False):
             if status == "PAID":
                 text += "\nОплата подтверждена."
                 text += "\nКонфигурация готова — откройте «Мои ключи» для подключения." if current["configuration_ready"] else "\nДоступ подготавливается. Его состояние доступно в «Мои ключи»."
-                text += "\nАвтопродление включено." if current["recurring"] == "ACTIVE" else "\nСостояние автопродления проверяйте в кабинете."
+                text += ("\nРазовая оплата без автопродления." if current["billing_mode"] == "ONE_TIME" else
+                         "\nАвтопродление включено." if current["recurring"] == "ACTIVE" else "\nСостояние автопродления проверяйте в кабинете.")
             elif status == "PREPARING":
                 text += "\nЗаказ ещё не отправлен на оплату. Для отмены откройте эту оплату на сайте в связанном аккаунте или обратитесь в поддержку."
             elif status == "CANCELLED":
@@ -153,7 +160,7 @@ async def catalog(event, runner, *, key_id=None, previous=None):
             "tariff_id": tariff["tariff_id"], "key_id": key_id, "previous": previous})
         add(builder, _tariff_button_text(tariff), "wmco_select:"+ref)
     navigation(builder)
-    await send(event, "<b>Выберите тариф</b>\nПосле выбора подписки потребуется отдельно подтвердить условия автопродления.", builder)
+    await send(event, "<b>Выберите тариф</b>\nПосле выбора подтвердите сумму и срок. Для подписки отдельно подтвердите условия автопродления.", builder)
 
 
 async def entry(event):
@@ -194,21 +201,7 @@ async def select(event, *, tariff_id, key_id=None, previous=None, callback_key=N
     if len(matches) != 1:
         raise JournalConflict("CHECKOUT_TARIFF_UNAVAILABLE")
     selected = matches[0]
-    if selected.get("billing_mode") == "ONE_TIME":
-        # Preserve SaaS default provider routing; never substitute a recurring purchase.
-        from . import provider_routing as routing
-        stable_event = event.model_copy(update={"id": stable})
-        if key_id is None:
-            await routing._create_new_order(stable_event, user_id=owner, tariff=selected, billing_mode="ONE_TIME", provider=None)
-        else:
-            from . import saas
-            context = await saas._load_checkout_context(event, key_id)
-            if context is None:
-                return
-            await routing._create_renew_order(stable_event, key_id=key_id, key=context[0], tariff=selected,
-                                             billing_mode="ONE_TIME", access_id=context[1]["access"]["access_id"], provider=None)
-        return
-    if legacy_provider not in {None, "YOOKASSA"}:
+    if selected.get("billing_mode") == "RECURRING" and legacy_provider not in {None, "YOOKASSA"}:
         await send(event, "Для подписки сейчас доступна ЮKassa. Заново выберите тариф и подтвердите условия.", buttons().row(InlineKeyboardButton(text="Выбрать тариф", callback_data="buy_key")))
         return
     access_id = await renewal_access(event, key_id)

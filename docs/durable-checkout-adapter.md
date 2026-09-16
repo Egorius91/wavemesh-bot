@@ -1,8 +1,8 @@
 # Durable Telegram checkout adapter
 
-The private Telegram checkout router now uses this adapter for initial YooKassa
-recurring buy/renew/consent/recovery and explicit next-purchase actions. It runs
-before both old SaaS and provider-routing handlers, including old recurring
+The private Telegram checkout router uses this adapter for ONE_TIME and initial
+YooKassa recurring buy/renew/confirmation/recovery and explicit next-purchase actions. It runs
+before both old SaaS and provider-routing handlers, including old payment
 callbacks. Do not activate sales or deploy it as an accepted commercial flow:
 actual SaaS/provider/runtime acceptance is still required. SaaS remains the
 only owner of Orders, Payments, subscriptions, paid periods and VPN desired state.
@@ -10,7 +10,8 @@ only owner of Orders, Payments, subscriptions, paid periods and VPN desired stat
 `CheckoutCoordinator.prepare` resolves the current Telegram-to-SaaS owner, reads
 the server current checkout before selecting a fresh operation, and persists the
 original tariff/amount/period/device/traffic terms. A caller must render these
-terms and obtain explicit recurring consent before calling `confirm`. The UI must
+terms and obtain explicit confirmation before calling `confirm`; recurring mode
+also requires saved-method and autorenewal consent. The UI must
 run only in an authenticated private chat; use a stable source-message callback
 identity, not Telegram callback.id, and place the opaque operation ID in action
 buttons. Callback aliases survive cancellation and completion, so a replay always
@@ -35,7 +36,8 @@ recovery protocol; elapsed time and a 404 are not proof of non-dispatch.
 snapshots and matches original terms/purchase kind before recording terminal
 evidence. A received CHECKOUT_ADMISSION_REQUIRED is retained only as a receipt.
 After original-key CHECKOUT_NOT_FOUND, GET `/bot/orders/checkout/rejection`
-must return the exact version-1 INITIAL_SAVED / NOT_ADMITTED / final=true /
+must return the exact version-1 kind (ONE_TIME or INITIAL_SAVED matching the
+original billing mode) / NOT_ADMITTED / final=true /
 allowNewCreate=false proof before SQLite commits TERMINAL / NOT_ADMITTED.
 This also resolves a lost refusal response without replaying POST. The original
 row and callback aliases remain permanently; a later Order cannot rebind them.
@@ -48,13 +50,15 @@ requires a new explicit action and exactly the verified terminal predecessor.
 payment or dispatched request. Bot authenticated undispatched-Order abandonment
 is not available in the SaaS contract yet; Web supports that separate action.
 
-Compatibility: create_order's new consent/predecessor fields are optional for old
-callers. ONE_TIME still uses SaaS default provider routing through its existing
-creation helper; source-choice identity is stable but this is not durable ONE_TIME
-admission/recovery. Recurring callbacks no longer reach the old creation helpers
-through the installed SaaS router. This adapter currently targets initial
-YooKassa recurring checkout, consuming SaaS #299/#300; ONE_TIME and Platega remain
-required and need shared admission/recovery. Platega recurring stays disabled.
+Compatibility: historical recurring journal payloads stay unchanged. ONE_TIME
+stores confirmed economics locally and strips that metadata before HTTP; it never
+sends recurring consent and keeps SaaS automatic YooKassa/Platega routing. Both
+modes share the unresolved-intent index and immutable callback identity. Missing
+or contradictory stored billing mode fails closed. Readback must contain matching
+billingMode/provider/terms, requiring the coordinated SaaS #307 contract before
+rollout. Old creation callbacks reach the same journal through the installed SaaS
+router. Platega recurring stays disabled. Rollout remains sales-closed until
+separate staging and provider acceptance.
 
 Tests exercise the real Python HTTP client against an isolated loopback API
 fixture and file-backed SQLite with independent connections: persistence before

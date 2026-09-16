@@ -23,8 +23,8 @@ TARIFF = {"tariff_id": "tariff-fixture-123", "name": "Original", "billing_mode":
 PROOF = {"version": 1, "checkoutKind": "INITIAL_SAVED", "outcome": "NOT_ADMITTED", "final": True, "allowNewCreate": False}
 
 
-def wire(order="order-fixture-123", status="PENDING"):
-    return {"version": 1, "allowNewCreate": False, "orderId": order, "paymentStatus": status,
+def wire(order="order-fixture-123", status="PENDING", mode="RECURRING", provider="YOOKASSA"):
+    return {"version": 1, "billingMode": mode, "provider": provider, "allowNewCreate": False, "orderId": order, "paymentStatus": status,
             "checkoutUrl": "https://checkout.invalid/original" if status == "PENDING" else None,
             "terms": {"tariffId": TARIFF["tariff_id"], "name": "Original", "amountRub": 299, "durationDays": 30,
                       "deviceLimit": 2, "trafficLimitGb": None, "purchaseKind": "NEW_ACCESS"},
@@ -96,7 +96,9 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
                 row = conn.execute("SELECT * FROM checkout_intents WHERE request_key=?", (key,)).fetchone()
                 self.assertEqual(row["phase"], "DISPATCHED")
                 self.assertIsNotNone(row["confirmed_at"])
-                self.assertEqual(body, json.loads(row["payload"]) | {"return_channel": "TELEGRAM"})
+                stored = json.loads(row["payload"])
+                expected = {k: v for k, v in stored.items() if k != "confirmed_terms"}
+                self.assertEqual(body, expected | {"return_channel": "TELEGRAM"})
             finally:
                 conn.close()
             self.posts.append((key, body))
@@ -106,7 +108,9 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
                 if self.post_mode == "lost-reject":
                     request.transport.close()
                 return web.json_response({"code": "CHECKOUT_ADMISSION_REQUIRED"}, status=409)
-            self.current = wire("order-fixture-"+str(len(self.posts)))
+            self.current = wire("order-fixture-"+str(len(self.posts)), mode=body["billing_mode"],
+                                provider="PLATEGA" if body["billing_mode"] == "ONE_TIME" else "YOOKASSA")
+            self.current["terms"]["tariffId"] = body["tariff_id"]
             if body.get("access_id"):
                 self.current["terms"]["purchaseKind"] = "RENEWAL"
             self.originals[key] = self.current
@@ -127,6 +131,74 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["current"]["payment_status"], "PENDING")
         self.assertEqual(self.posts[0][1]["recurring_consent"]["amountRub"], 299)
         self.assertEqual(self.posts[0][1]["provider"], "YOOKASSA")
+
+    async def test_one_time_lost_response_restart_and_duplicate_confirm_keep_one_post(self):
+        self.catalog[0]["billing_mode"] = "ONE_TIME"
+        row = await self.prepare()
+        self.assertEqual(json.loads(row["payload"])["confirmed_terms"]["amountRub"], 299)
+        self.post_mode = "lost"
+        await self.runner.confirm(123, row["id"])
+        restarted = CheckoutCoordinator(self.client, CheckoutJournal(self.connect))
+        result = await restarted.confirm(123, row["id"])
+        self.assertEqual(result["original"]["billing_mode"], "ONE_TIME")
+        self.assertEqual(result["original"]["provider"], "PLATEGA")
+        self.assertEqual(len(self.posts), 1)
+        body = self.posts[0][1]
+        self.assertEqual(set(body), {"user_id", "tariff_id", "billing_mode", "return_channel"})
+        self.assertEqual(self.journal.owned(row["id"], 123, connection_scope(self.client), OWNER)["request_key"], row["request_key"])
+
+    async def test_one_time_refusal_requires_its_kind_then_explicit_predecessor(self):
+        self.catalog[0]["billing_mode"] = "ONE_TIME"
+        row = await self.prepare()
+        self.post_mode = "lost-reject"
+        with self.assertRaises(InternalApiError):
+            await self.runner.confirm(123, row["id"])
+        self.assertEqual(self.journal.active(123, connection_scope(self.client), OWNER)["id"], row["id"])
+        self.proof_body["checkoutKind"] = "ONE_TIME"
+        self.current.update(paymentStatus="PAID", checkoutUrl=None)
+        await self.runner.recover(123, row["id"])
+        next_row = await self.prepare("callback-next-123", previous=self.current["orderId"])
+        self.post_mode = "success"
+        await self.runner.confirm(123, next_row["id"])
+        self.assertEqual(len(self.posts), 2)
+        self.assertEqual(self.posts[1][1]["expected_previous_order_id"], "competing-order-123")
+        self.assertNotIn("recurring_consent", self.posts[1][1])
+        await self.runner.confirm(123, row["id"])
+        self.assertEqual(len(self.posts), 2)
+
+    async def test_one_time_wrong_snapshot_mode_cannot_resolve_original(self):
+        self.catalog[0]["billing_mode"] = "ONE_TIME"
+        row = await self.prepare()
+        await self.runner.confirm(123, row["id"])
+        self.current.update(billingMode="RECURRING", provider="YOOKASSA", paymentStatus="PAID", checkoutUrl=None)
+        with self.assertRaises(JournalConflict):
+            await self.runner.recover(123, row["id"])
+        self.assertEqual(self.journal.active(123, connection_scope(self.client), OWNER)["id"], row["id"])
+        self.assertEqual(len(self.posts), 1)
+
+    async def test_corrupt_one_time_payload_cannot_dispatch_or_reallocate(self):
+        self.catalog[0]["billing_mode"] = "ONE_TIME"
+        row = await self.prepare()
+        payload = json.loads(row["payload"])
+        del payload["billing_mode"]
+        conn = self.connect()
+        try:
+            conn.execute("UPDATE checkout_intents SET payload=? WHERE id=?", (json.dumps(payload), row["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+        with self.assertRaises(CheckoutContractError):
+            await self.runner.confirm(123, row["id"])
+        with self.assertRaises(CheckoutContractError):
+            await self.prepare("callback-new-123")
+        self.assertEqual(self.posts, [])
+
+    async def test_cross_mode_selections_share_one_original_and_dispatch(self):
+        self.catalog.append(TARIFF | {"tariff_id": "tariff-one-time-123", "billing_mode": "ONE_TIME"})
+        a, b = await asyncio.gather(self.prepare(), self.runner.prepare(123, "callback-other-123", "tariff-one-time-123"))
+        self.assertEqual(a["id"], b["operation"]["id"])
+        await asyncio.gather(self.runner.confirm(123, a["id"]), self.runner.confirm(123, b["operation"]["id"]))
+        self.assertEqual(len(self.posts), 1)
 
     async def test_lost_http_response_and_restart_never_resend(self):
         row = await self.prepare()
@@ -408,6 +480,7 @@ class SnapshotTests(unittest.TestCase):
 
     def test_malformed_snapshots_fail_closed(self):
         changes = [{"version": True}, {"allowNewCreate": True}, {"paymentStatus": "UNKNOWN"},
+                   {"billingMode": None}, {"billingMode": "UNKNOWN"}, {"provider": None}, {"provider": "PLATEGA"},
                    {"checkoutUrl": "https://user:secret@checkout.invalid"}, {"checkoutUrl": "https://"},
                    {"checkoutUrl": "https://checkout.invalid\\evil"}, {"checkoutUrl": "https://checkout.invalid/\nsecret"},
                    {"checkoutUrl": "http://checkout.invalid"}, {"checkoutUrl": "https://checkout.invalid:bad"},

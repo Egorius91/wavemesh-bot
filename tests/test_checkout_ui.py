@@ -25,8 +25,8 @@ TARIFF = {"tariff_id": "tariff-fixture-123", "name": "Original", "billing_mode":
           "price_rub": 299, "duration_days": 30, "device_limit": 2, "traffic_limit_gb": None}
 
 
-def wire(order="order-fixture-123", status="PENDING"):
-    return {"version": 1, "allowNewCreate": False, "orderId": order, "paymentStatus": status,
+def wire(order="order-fixture-123", status="PENDING", mode="RECURRING"):
+    return {"version": 1, "billingMode": mode, "provider": "YOOKASSA", "allowNewCreate": False, "orderId": order, "paymentStatus": status,
             "checkoutUrl": "https://checkout.invalid/original" if status == "PENDING" else None,
             "terms": {"tariffId": TARIFF["tariff_id"], "name": "Original", "amountRub": 299, "durationDays": 30,
                       "deviceLimit": 2, "trafficLimitGb": None, "purchaseKind": "NEW_ACCESS"},
@@ -101,14 +101,13 @@ class CheckoutUITests(unittest.IsolatedAsyncioTestCase):
 
     async def create(self, **payload):
         self.posts.append(payload)
-        self.current = wire("order-fixture-"+str(len(self.posts)))
+        self.current = wire("order-fixture-"+str(len(self.posts)), mode=payload["billing_mode"])
         if payload.get("access_id"):
             self.current["terms"]["purchaseKind"] = "RENEWAL"
         self.originals[payload["idempotency_key"]] = self.current
-        if payload["billing_mode"] == "RECURRING":
-            row = self.journal.active(123, connection_scope(self.client), OWNER)
-            self.assertEqual(row["phase"], "DISPATCHED")
-            self.assertIsNotNone(row["confirmed_at"])
+        row = self.journal.active(123, connection_scope(self.client), OWNER)
+        self.assertEqual(row["phase"], "DISPATCHED")
+        self.assertIsNotNone(row["confirmed_at"])
         if self.lost:
             raise InternalApiError("timeout", code="INTERNAL_API_TIMEOUT")
         return {"order_id": self.current["orderId"], "checkout_url": self.current["checkoutUrl"], "status": "pending"}
@@ -288,13 +287,49 @@ class CheckoutUITests(unittest.IsolatedAsyncioTestCase):
 
     async def test_one_time_keeps_saas_default_provider_routing(self):
         self.tariffs[0]["billing_mode"] = "ONE_TIME"
-        with patch("bot.handlers.user.payments.provider_routing.internal_api_client", self.client), \
-             patch("bot.handlers.user.payments.provider_routing.safe_edit_or_send", self.sent):
-            await self.feed("buy_key")
-            choice = self.callback("wmco_select:")
-            await self.feed(choice)
+        _, confirm = await self.prepared()
+        self.assertEqual(self.posts, [])
+        self.assertIn("Подтвердите разовую оплату", self.last()[0])
+        self.assertIn("299 ₽ за 30 дней без автопродления", self.last()[0])
+        self.assertNotIn("сохранение способа оплаты", self.last()[0])
+        self.assertEqual(next(b.text for b in self.last()[1] if b.callback_data == confirm), "Подтвердить и оплатить")
+        self.lost = True
+        await self.feed(confirm)
+        await self.feed(confirm, callback_id="another-tap")
         self.assertEqual(self.posts[0]["billing_mode"], "ONE_TIME")
-        self.assertIsNone(self.posts[0]["provider"])
+        self.assertNotIn("provider", self.posts[0])
+        self.assertNotIn("recurring_consent", self.posts[0])
+        self.assertNotIn("confirmed_terms", self.posts[0])
+        self.assertEqual(len(self.posts), 1)
+
+    async def test_one_time_next_purchase_preserves_explicit_predecessor(self):
+        self.tariffs[0]["billing_mode"] = "ONE_TIME"
+        choice, confirm = await self.prepared()
+        await self.feed(confirm)
+        original = self.current["orderId"]
+        self.current.update(paymentStatus="PAID", checkoutUrl=None)
+        await self.feed("wmco_current")
+        self.assertIn("Разовая оплата без автопродления", self.last()[0])
+        self.assertNotIn("Состояние автопродления", self.last()[0])
+        await self.feed(self.callback("wmco_next:"))
+        await self.feed(self.callback("wmco_select:"))
+        self.assertEqual(len(self.posts), 1)
+        await self.feed(self.callback("wmco_confirm:"))
+        self.assertEqual(self.posts[1]["expected_previous_order_id"], original)
+        await self.feed(choice)
+        self.assertEqual(len(self.posts), 2)
+
+    async def test_all_legacy_one_time_callbacks_prepare_without_direct_post(self):
+        self.tariffs[0]["billing_mode"] = "ONE_TIME"
+        context = ({"display_name": "Key"}, {"user_id": OWNER, "access": {"access_id": "access-fixture-123"}}, {})
+        with patch("bot.handlers.user.payments.saas._load_checkout_context", AsyncMock(return_value=context)):
+            for data in ("saas_new_checkout:"+TARIFF["tariff_id"], "saas_np:pg:"+TARIFF["tariff_id"],
+                         "saas_checkout:7:"+TARIFF["tariff_id"], "saas_rp:7:yk:"+TARIFF["tariff_id"]):
+                await self.feed(data)
+                self.assertIn("Подтвердите разовую оплату", self.last()[0])
+                self.assertEqual(self.posts, [])
+                await self.feed(self.callback("wmco_cancel:"))
+        self.fallback.assert_not_awaited()
 
     async def test_group_wrong_actor_and_inline_updates_do_nothing(self):
         for kw in ({"chat": -123, "chat_type": "group"}, {"actor": 456}, {"inline": "inline-fixture"}):
