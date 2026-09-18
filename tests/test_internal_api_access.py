@@ -64,6 +64,7 @@ class InternalApiAccessTests(unittest.IsolatedAsyncioTestCase):
                     "access_id": "access-12345678",
                     "status": "ready",
                     "ready": True,
+                    "node_id": "node-1",
                     "desired_version": 2,
                     "panel_email": "wm_access_123",
                     "client_uuid": "f5ee70ce-8a27-4f15-b81e-edc8a8bd11c4",
@@ -81,6 +82,15 @@ class InternalApiAccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(pending["ready"])
         self.assertTrue(ready["ready"])
         self.assertEqual(ready["primary_inbound_id"], 9)
+        for override in ({"subscription_url":"https://u:p@entry.invalid/sub/value"},
+                         {"subscription_url":"https:///sub/value"}, {"subscription_url":123},
+                         {"subscription_url":"https://entry.invalid/sub/value#fragment"},
+                         {"subscription_url":"https://entry.invalid/sub/\nvalue"},
+                         {"node_id":"../other"}, {"desired_version":True}, {"primary_inbound_id":True}):
+            with self.subTest(override=override):
+                client._request = AsyncMock(return_value=ready | override)
+                with self.assertRaises(InternalApiError):
+                    await client.get_access_material("access-12345678")
 
     async def test_get_access_material_rejects_incomplete_ready_response(self):
         client = WaveMeshInternalApiClient()
@@ -108,13 +118,14 @@ class InternalApiAccessTests(unittest.IsolatedAsyncioTestCase):
         result = await client.replace_access(
             access_id="access-12345678",
             idempotency_key="telegram-replace-10-2",
+            expected_version=1,
         )
 
         self.assertEqual(result["desired_version"], 2)
         client._request.assert_awaited_once_with(
             "POST",
             "bot/accesses/access-12345678/replace",
-            json_body={},
+            json_body={"expected_version": 1},
             idempotency_key="telegram-replace-10-2",
         )
 

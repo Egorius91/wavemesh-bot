@@ -37,6 +37,7 @@ class AccessShadowDatabaseTests(unittest.TestCase):
                 max_ips INTEGER DEFAULT 1
             );
             CREATE TABLE vpn_keys (
+                    saas_managed INTEGER NOT NULL DEFAULT 0,
                 id INTEGER PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 server_id INTEGER,

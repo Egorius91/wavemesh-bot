@@ -15,6 +15,7 @@ from database.connection import get_db
 _TRIGGER_SQL = r"""
 CREATE TRIGGER IF NOT EXISTS trg_access_shadow_outbox_vpn_keys_insert
 AFTER INSERT ON vpn_keys
+WHEN NEW.saas_managed = 0
 BEGIN
     INSERT INTO access_shadow_outbox
         (event_key, legacy_key_id, reason, payload_json)
@@ -59,6 +60,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_access_shadow_outbox_vpn_keys_update
 AFTER UPDATE ON vpn_keys
 WHEN
+    NEW.saas_managed = 0 AND (
     OLD.user_id IS NOT NEW.user_id OR
     OLD.server_id IS NOT NEW.server_id OR
     OLD.tariff_id IS NOT NEW.tariff_id OR
@@ -67,7 +69,7 @@ WHEN
     OLD.sub_id IS NOT NEW.sub_id OR
     OLD.expires_at IS NOT NEW.expires_at OR
     OLD.traffic_limit IS NOT NEW.traffic_limit OR
-    OLD.traffic_used IS NOT NEW.traffic_used
+    OLD.traffic_used IS NOT NEW.traffic_used)
 BEGIN
     INSERT INTO access_shadow_outbox
         (event_key, legacy_key_id, reason, payload_json)

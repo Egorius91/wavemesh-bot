@@ -21,6 +21,7 @@ from bot.services.internal_api import (
     schedule_telegram_user_upsert,
 )
 from bot.utils.text import safe_edit_or_send
+from bot.services.private_chat import private_actor_id, private_message_for
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,11 @@ class PaymentReturnMaterialization:
 @dataclass(frozen=True)
 class VerifiedReadyPaymentReturn:
     access_id: str
+    telegram_id: int
     subscription_url: str = field(repr=False)
     access: dict[str, Any] = field(repr=False)
     material: dict[str, Any] = field(repr=False)
+    saas_user_id: str | None = None
 
 
 def extract_payment_return_payload(text: str | None) -> str | None:
@@ -205,8 +208,12 @@ async def load_verified_ready_payment_return(
 ) -> VerifiedReadyPaymentReturn:
     """Load one user-owned ready access and its validated SaaS material."""
     dashboard = await internal_api_client.get_telegram_dashboard(telegram_id)
+    owner = dashboard.get("user", {})
+    if (not isinstance(owner, dict) or owner.get("tenant_id") != internal_api_client.tenant_id
+            or not isinstance(owner.get("user_id"), str) or not owner["user_id"]):
+        raise InternalApiError("Invalid SaaS owner", code="INTERNAL_API_INVALID_RESPONSE")
     access = _single_dashboard_access(dashboard, access_id)
-    if access.get("status") != "ready":
+    if access.get("status") != "ready" or access.get("authority") != "managed" or access.get("enabled") is not True:
         raise InternalApiError(
             "Paid access is not ready yet",
             code="ACCESS_MATERIAL_NOT_READY",
@@ -221,11 +228,18 @@ async def load_verified_ready_payment_return(
             retryable=True,
         )
 
+    if (material.get("access_id") != access_id
+            or access.get("desired_version") != material.get("desired_version")
+            or access.get("subscription_url") != material.get("subscription_url")):
+        raise InternalApiError("Access changed during read", code="ACCESS_MATERIAL_NOT_READY", retryable=True)
+
     return VerifiedReadyPaymentReturn(
         access_id=access_id,
+        telegram_id=telegram_id,
         subscription_url=str(material["subscription_url"]),
         access=access,
         material=material,
+        saas_user_id=owner["user_id"],
     )
 
 
@@ -242,7 +256,7 @@ async def materialize_ready_payment_return(
             telegram_id=telegram_id,
             access_id=access_id,
         )
-        if resolved.access_id != access_id:
+        if resolved.access_id != access_id or resolved.telegram_id != telegram_id:
             raise InternalApiError(
                 "Verified payment access does not match the requested access",
                 code="INTERNAL_API_INVALID_RESPONSE",
@@ -256,19 +270,8 @@ async def materialize_ready_payment_return(
         from bot.handlers.user.payments.saas import (
             _resolve_local_projection_tariffs,
         )
-        from database.db_keys import (
-            create_materialized_vpn_key_from_saas,
-            find_materialized_key_for_user,
-        )
-        from database.payment_return_projection import (
-            refresh_materialized_key_from_saas,
-        )
-        from database.requests import (
-            get_active_servers,
-            get_all_tariffs,
-            get_key_details_for_user,
-            get_user_internal_id,
-        )
+        from database.saas_access_projection import project_ready
+        from database.requests import get_all_tariffs, get_key_details_for_user, get_user_internal_id
 
         user_id = get_user_internal_id(telegram_id)
         if not user_id:
@@ -297,59 +300,14 @@ async def materialize_ready_payment_return(
                 code="INTERNAL_API_INVALID_RESPONSE",
             ) from error
 
-        existing = _local_key_from_declared_projection(
-            access,
-            telegram_id,
-            material,
+        declared_key = access.get("legacy_key_id")
+        key_id, outcome = project_ready(
+            tenant_id=internal_api_client.tenant_id, saas_user_id=resolved.saas_user_id,
+            user_id=int(user_id), telegram_id=telegram_id, material=material,
+            expires_at=str(access["expires_at"]), traffic_limit=traffic_limit,
+            traffic_used=max(0, int(access.get("traffic_used_bytes") or 0)),
+            tariff_id=local_tariff_id, key_id=int(declared_key) if declared_key else None,
         )
-        if existing is None:
-            existing = find_materialized_key_for_user(
-                int(user_id),
-                str(material["client_uuid"]),
-                str(material["panel_email"]),
-                str(material["sub_id"]),
-            )
-
-        if existing:
-            key_id = int(existing["id"])
-            if _local_projection_needs_refresh(
-                existing,
-                tariff_id=local_tariff_id,
-                expires_at=expires_at,
-                traffic_limit=traffic_limit,
-            ):
-                if not refresh_materialized_key_from_saas(
-                    key_id=key_id,
-                    tariff_id=local_tariff_id,
-                    expires_at=expires_at,
-                    traffic_limit=traffic_limit,
-                ):
-                    raise InternalApiError(
-                        "Local key renewal projection failed",
-                        code="LOCAL_PROJECTION_FAILED",
-                    )
-                outcome = "renewed"
-            else:
-                outcome = "existing"
-        else:
-            servers = get_active_servers()
-            if len(servers) != 1:
-                raise InternalApiError(
-                    "Local SaaS server projection is ambiguous",
-                    code="LOCAL_PROJECTION_NOT_READY",
-                )
-            key_id = create_materialized_vpn_key_from_saas(
-                user_id=int(user_id),
-                server_id=int(servers[0]["id"]),
-                tariff_id=local_tariff_id,
-                panel_inbound_id=int(material["primary_inbound_id"]),
-                panel_email=str(material["panel_email"]),
-                client_uuid=str(material["client_uuid"]),
-                sub_id=str(material["sub_id"]),
-                expires_at=expires_at,
-                traffic_limit=traffic_limit,
-            )
-            outcome = "created"
 
         await internal_api_client.link_access_projection(
             access_id=access_id,
@@ -388,6 +346,8 @@ async def _render_verified_subscription(
     verified: VerifiedReadyPaymentReturn,
 ) -> None:
     """Deliver the authoritative SaaS URL before any local projection work."""
+    if private_message_for(message, verified.telegram_id) is None:
+        raise InternalApiError("Private owner chat required", code="PRIVATE_CHAT_REQUIRED", status=403)
     from bot.utils.key_sender_core import render_key_delivery_page
 
     await render_key_delivery_page(
@@ -434,6 +394,8 @@ async def process_ready_payment_return(
     access_id: str,
 ) -> None:
     """Deliver verified SaaS material, then best-effort the legacy projection."""
+    if private_message_for(message, telegram_id) is None:
+        raise InternalApiError("Private owner chat required", code="PRIVATE_CHAT_REQUIRED", status=403)
     verified = await load_verified_ready_payment_return(
         telegram_id=telegram_id,
         access_id=access_id,
@@ -458,7 +420,7 @@ async def process_ready_payment_return(
         )
         return
     except Exception:
-        logger.exception(
+        logger.warning(
             "Unexpected payment return local projection error: telegram_id=%s "
             "access_id=%s",
             telegram_id,
@@ -480,6 +442,8 @@ async def payment_return_deeplink(
     command: CommandObject,
 ) -> None:
     """Resolve one opaque payment-return token and project only verified state."""
+    if private_actor_id(message) is None:
+        return
     telegram_user = message.from_user
     if telegram_user is None:
         return

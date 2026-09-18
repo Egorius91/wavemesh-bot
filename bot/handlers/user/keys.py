@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramForbiddenError
 from config import ADMIN_IDS
 from database.requests import get_or_create_user, is_user_banned, get_all_servers, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
+from bot.services.runtime_mode import saas_client_mode_enabled
 from bot.keyboards.user import main_menu_kb
 from bot.states.user_states import RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
@@ -97,6 +98,9 @@ async def _build_my_keys_render_data(telegram_id: int):
 
 async def _render_my_keys_page(target, telegram_id: int, force_new: bool = False) -> None:
     """Рендерит страницу «Мои ключи» из таблицы pages."""
+    if saas_client_mode_enabled():
+        from bot.handlers.user.saas_keys import show_list
+        return await show_list(target, telegram_id, force_new=force_new)
     from bot.utils.live_page_renderer import render_live_page
 
     keys, keys_list_text, key_buttons = await _build_my_keys_render_data(telegram_id)
@@ -160,6 +164,9 @@ async def my_keys_handler(callback: CallbackQuery):
 
 async def show_key_details(telegram_id: int, key_id: int, message, is_callback: bool = True, prepend_text: str=''):
     """Общая логика для показа деталей ключа."""
+    if saas_client_mode_enabled():
+        from bot.handlers.user.saas_keys import show_access
+        return await show_access(telegram_id, message, key_id=key_id)
     from database.requests import (
         get_key_details_for_user, get_key_payments_history, is_key_active,
         is_traffic_exhausted, get_active_subscription_by_key,
@@ -263,6 +270,9 @@ async def show_key_details(telegram_id: int, key_id: int, message, is_callback: 
 @router.callback_query(F.data.startswith('key_delete:'))
 async def key_delete_handler(callback: CallbackQuery):
     """Удаление истекшего ключа пользователем."""
+    if saas_client_mode_enabled():
+        await callback.answer("Для отзыва доступа обратитесь в поддержку.", show_alert=True)
+        return
     key_id = int(callback.data.split(':')[1])
     telegram_id = callback.fromuser.id if hasattr(callback, 'fromuser') else callback.from_user.id
     from database.requests import get_key_details_for_user, delete_vpn_key
@@ -310,6 +320,9 @@ async def key_details_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith('key_unlink_card:'))
 async def key_unlink_card_handler(callback: CallbackQuery):
     """Отключает автопродление и отвязывает сохранённый способ оплаты."""
+    if saas_client_mode_enabled():
+        await callback.answer("Управляйте автопродлением через раздел «Автопродление».", show_alert=True)
+        return
     key_id = int(callback.data.split(':')[1])
     telegram_id = callback.from_user.id
     from database.requests import get_key_details_for_user, get_user_internal_id, unlink_subscription_payment_method_by_key
@@ -334,6 +347,10 @@ async def key_unlink_card_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith('key_show:'))
 async def key_show_handler(callback: CallbackQuery):
     """Показать ключ для копирования (с QR и JSON)."""
+    if saas_client_mode_enabled():
+        from bot.handlers.user.saas_keys import show_access
+        await callback.answer()
+        return await show_access(callback.from_user.id, callback, key_id=int(callback.data.split(":", 1)[1]), config=True)
     from database.requests import get_key_details_for_user
     from bot.keyboards.user import key_show_kb
     from bot.utils.key_sender import send_key_with_qr

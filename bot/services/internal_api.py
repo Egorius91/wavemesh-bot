@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import re
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -25,6 +26,36 @@ _PAYMENT_RETURN_STATUSES = frozenset(
 )
 _PAYMENT_PROVIDERS = frozenset({"YOOKASSA", "PLATEGA"})
 _PAYMENT_PROVIDER_ROLES = frozenset({"DEFAULT", "CHOICE"})
+_TRIAL_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_TRIAL_STATUSES = frozenset({"PENDING", "MATERIALIZING", "READY", "FAILED", "EXPIRED", "DISABLED"})
+
+
+def validate_trial_user_id(value: Any) -> str:
+    if not isinstance(value, str) or not _TRIAL_ID.fullmatch(value):
+        raise InternalApiError("Invalid trial user identity", code="INTERNAL_API_INVALID_RESPONSE")
+    return value
+
+
+def _validated_trial(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise InternalApiError("Invalid trial response", code="INTERNAL_API_INVALID_RESPONSE")
+    for key in ("activation_id", "access_id", "command_id"):
+        validate_trial_user_id(result.get(key))
+    if result.get("subscription_id") is not None:
+        validate_trial_user_id(result["subscription_id"])
+    if not isinstance(result.get("status"), str) or result["status"] not in _TRIAL_STATUSES:
+        raise InternalApiError("Invalid trial status", code="INTERNAL_API_INVALID_RESPONSE")
+    try:
+        expires = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
+        if expires.tzinfo is None:
+            raise ValueError("Missing timezone")
+    except (KeyError, AttributeError, TypeError, ValueError) as error:
+        raise InternalApiError("Invalid trial expiry", code="INTERNAL_API_INVALID_RESPONSE") from error
+    if result["status"] == "READY" and not result.get("subscription_id"):
+        raise InternalApiError("Unbound ready trial", code="INTERNAL_API_INVALID_RESPONSE")
+    return {key: result[key] for key in ("activation_id", "access_id", "command_id", "status", "expires_at")} | {
+        "subscription_id": result.get("subscription_id"),
+    }
 
 
 class InternalApiError(RuntimeError):
@@ -284,6 +315,17 @@ class WaveMeshInternalApiClient:
 
         return result
 
+    async def activate_trial(self, user_id: str) -> dict[str, Any]:
+        # SaaS user/offer uniqueness is the durable identity across both channels.
+        user_id = validate_trial_user_id(user_id)
+        return _validated_trial(await self._request(
+            "POST", "bot/trials", json_body={"user_id": user_id, "offer_code": "TRIAL3"},
+        ))
+
+    async def get_trial(self, user_id: str) -> dict[str, Any]:
+        user_id = validate_trial_user_id(user_id)
+        return _validated_trial(await self._request("GET", f"bot/users/{user_id}/trials/TRIAL3"))
+
     async def create_order(
         self,
         *,
@@ -295,6 +337,9 @@ class WaveMeshInternalApiClient:
         return_url: str | None = None,
         return_channel: str | None = "TELEGRAM",
         idempotency_key: str | None = None,
+        recurring_consent: dict[str, Any] | None = None,
+        confirmed_terms: dict[str, Any] | None = None,
+        expected_previous_order_id: str | None = None,
     ) -> dict[str, Any]:
         """Создаёт SaaS order и запрашивает безопасный возврат в Telegram."""
         if return_url and return_channel:
@@ -345,6 +390,22 @@ class WaveMeshInternalApiClient:
             payload["return_url"] = return_url
         if normalized_return_channel:
             payload["return_channel"] = normalized_return_channel
+        if recurring_consent is not None or confirmed_terms is not None or expected_previous_order_id is not None:
+            from bot.services.checkout_contract import consent, identity, request_key
+            try:
+                if recurring_consent is not None and (normalized_billing_mode != "RECURRING" or normalized_provider != "YOOKASSA"):
+                    raise ValueError("Invalid saved checkout provider")
+                request_key(idempotency_key)
+                if recurring_consent is not None:
+                    payload["recurring_consent"] = consent(recurring_consent)
+                if confirmed_terms is not None:
+                    if normalized_billing_mode != "ONE_TIME":
+                        raise ValueError("Invalid one-time confirmation mode")
+                    payload["confirmed_terms"] = consent(confirmed_terms)
+                if expected_previous_order_id is not None:
+                    payload["expected_previous_order_id"] = identity(expected_previous_order_id)
+            except ValueError as error:
+                raise InternalApiError("Invalid saved checkout intent", code="INTERNAL_API_INVALID_REQUEST") from error
 
         result = await self._request(
             "POST",
@@ -375,6 +436,65 @@ class WaveMeshInternalApiClient:
             )
 
         return result
+
+    async def get_current_checkout(self, user_id: str) -> dict[str, Any] | None:
+        return await self._checkout_read(user_id)
+
+    async def get_checkout(self, user_id: str, idempotency_key: str) -> dict[str, Any]:
+        return await self._checkout_read(user_id, idempotency_key)
+
+    async def get_checkout_rejection(self, user_id: str, idempotency_key: str, *, billing_mode="RECURRING") -> bool:
+        from bot.services.checkout_contract import identity, rejection_proof, request_key
+
+        try:
+            identity(user_id)
+            request_key(idempotency_key)
+        except ValueError as error:
+            raise InternalApiError("Invalid checkout identity", code="INTERNAL_API_INVALID_REQUEST") from error
+        try:
+            result = await self._request("GET", f"bot/orders/checkout/rejection?user_id={user_id}", idempotency_key=idempotency_key)
+        except InternalApiError as error:
+            if error.status == 404 and error.code == "CHECKOUT_NOT_FOUND":
+                return False
+            raise
+        try:
+            return rejection_proof(result, billing_mode)
+        except ValueError as error:
+            raise InternalApiError("Invalid checkout rejection", code="INTERNAL_API_INVALID_RESPONSE") from error
+
+    async def reject_unadmitted_checkout(self, *, original_payload: dict[str, Any], idempotency_key: str) -> bool:
+        """Fence the exact original Bot checkout intent; the caller must GET proof afterward."""
+        from bot.services.checkout_contract import dispatch_payload, rejection_proof, request_key
+
+        try:
+            request_key(idempotency_key)
+            payload = dispatch_payload(original_payload)
+        except ValueError as error:
+            raise InternalApiError("Invalid checkout intent", code="INTERNAL_API_INVALID_REQUEST") from error
+        try:
+            result = await self._request(
+                "POST", "bot/orders/checkout/reject-unadmitted",
+                json_body=payload | {"return_channel": "TELEGRAM"},
+                idempotency_key=idempotency_key,
+            )
+            return rejection_proof(result, payload["billing_mode"])
+        except ValueError as error:
+            raise InternalApiError("Invalid checkout rejection", code="INTERNAL_API_INVALID_RESPONSE") from error
+
+    async def _checkout_read(self, user_id, idempotency_key=None):
+        from bot.services.checkout_contract import identity, request_key, snapshot
+        try:
+            identity(user_id)
+            if idempotency_key is not None:
+                request_key(idempotency_key)
+        except ValueError as error:
+            raise InternalApiError("Invalid checkout identity", code="INTERNAL_API_INVALID_REQUEST") from error
+        path = "current" if idempotency_key is None else "status"
+        result = await self._request("GET", f"bot/orders/checkout/{path}?user_id={user_id}", idempotency_key=idempotency_key)
+        try:
+            return snapshot(result, current=idempotency_key is None)
+        except (ValueError, TypeError) as error:
+            raise InternalApiError("Invalid checkout snapshot", code="INTERNAL_API_INVALID_RESPONSE") from error
 
     async def resolve_payment_return(
         self,
@@ -459,25 +579,36 @@ class WaveMeshInternalApiClient:
         *,
         access_id: str,
         idempotency_key: str,
+        expected_version: int,
     ) -> dict[str, Any]:
+        from bot.services.replacement_contract import reference, request_values
+        try:
+            request_values(access_id, idempotency_key, expected_version)
+        except (ValueError, TypeError) as error:
+            raise InternalApiError("Invalid replacement request", code="INTERNAL_API_INVALID_REQUEST") from error
         result = await self._request(
             "POST",
             f"bot/accesses/{access_id}/replace",
-            json_body={},
+            json_body={"expected_version": expected_version},
             idempotency_key=idempotency_key,
         )
-        if (
-            not isinstance(result, dict)
-            or not isinstance(result.get("command_id"), str)
-            or result.get("status") not in {"pending", "running"}
-            or not isinstance(result.get("desired_version"), int)
-            or result["desired_version"] < 2
-        ):
-            raise InternalApiError(
-                "Unexpected access replacement response",
-                code="INTERNAL_API_INVALID_RESPONSE",
-            )
-        return result
+        try:
+            return reference(result, expected_version)
+        except (ValueError, TypeError) as error:
+            raise InternalApiError("Invalid replacement response", code="INTERNAL_API_INVALID_RESPONSE") from error
+
+    async def get_access_replacement(self, access_id: str, idempotency_key: str, expected_version: int) -> dict[str, Any]:
+        from bot.services.replacement_contract import readback, request_values
+        try:
+            request_values(access_id, idempotency_key, expected_version)
+        except (ValueError, TypeError) as error:
+            raise InternalApiError("Invalid replacement request", code="INTERNAL_API_INVALID_REQUEST") from error
+        result = await self._request("GET", f"bot/accesses/{access_id}/replacement?expected_version={expected_version}",
+                                     idempotency_key=idempotency_key)
+        try:
+            return readback(result, access_id, expected_version)
+        except (ValueError, TypeError) as error:
+            raise InternalApiError("Invalid replacement readback", code="INTERNAL_API_INVALID_RESPONSE") from error
 
     async def create_access(
         self,
@@ -521,6 +652,42 @@ class WaveMeshInternalApiClient:
             )
         return result
 
+    async def get_access_provisioning(self, idempotency_key: str) -> dict[str, Any]:
+        if not isinstance(idempotency_key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,200}", idempotency_key):
+            raise InternalApiError("Invalid provisioning request identity", code="INTERNAL_API_INVALID_RESPONSE")
+        result = await self._request("GET", "bot/access-provisioning", idempotency_key=idempotency_key)
+        valid = (isinstance(result, dict) and result.get("submission") in ("OBSERVED", "UNCONFIRMED")
+                 and result.get("can_retry_create") is False and isinstance(result.get("status"), str))
+        if valid and result["submission"] == "OBSERVED":
+            valid = all(isinstance(result.get(k), str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result[k]) for k in
+                        ("access_id", "command_id", "assigned_entry_node_id"))
+            valid = valid and isinstance(result.get("legacy_key_id"), str) and result["legacy_key_id"].isdigit()
+            try:
+                valid = valid and datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00")).tzinfo is not None
+            except (KeyError, AttributeError, TypeError, ValueError):
+                valid = False
+        if not valid:
+            raise InternalApiError("Invalid provisioning readback", code="INTERNAL_API_INVALID_RESPONSE")
+        return {k: result.get(k) for k in ("submission", "status", "access_id", "command_id",
+                "assigned_entry_node_id", "legacy_key_id", "expires_at", "can_retry_create")}
+
+    async def get_provisioning_entries(self) -> dict[str, Any]:
+        result = await self._request("GET", "bot/provisioning-entries")
+        if (not isinstance(result, dict) or result.get("tenant_id") != self.tenant_id
+                or not isinstance(result.get("service_client_id"), str)
+                or not _TRIAL_ID.fullmatch(result["service_client_id"])
+                or not isinstance(result.get("entries"), list)):
+            raise InternalApiError("Invalid Entry catalog", code="INTERNAL_API_INVALID_RESPONSE")
+        entries, seen = [], set()
+        for item in result["entries"]:
+            if (not isinstance(item, dict) or not isinstance(item.get("node_id"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", item["node_id"])
+                    or item["node_id"] in seen or any(not isinstance(item.get(k), str) for k in ("name","external_id"))):
+                raise InternalApiError("Invalid Entry catalog", code="INTERNAL_API_INVALID_RESPONSE")
+            seen.add(item["node_id"])
+            entries.append({k: item[k] for k in ("node_id","name","external_id")})
+        return {"tenant_id":result["tenant_id"], "service_client_id":result["service_client_id"], "entries":entries}
+
     async def get_access_material(self, access_id: str) -> dict[str, Any]:
         result = await self._request(
             "GET",
@@ -537,7 +704,19 @@ class WaveMeshInternalApiClient:
                 code="INTERNAL_API_INVALID_RESPONSE",
             )
         if result["ready"]:
+            from urllib.parse import urlsplit
+            try:
+                raw_url = result["subscription_url"]
+                if not isinstance(raw_url, str):
+                    raise ValueError()
+                url = urlsplit(raw_url)
+                valid_url = (isinstance(raw_url, str) and url.scheme == "https" and bool(url.hostname)
+                             and not url.username and not url.password and not url.fragment
+                             and not any(c.isspace() or ord(c) < 32 for c in raw_url))
+            except (KeyError, TypeError, ValueError):
+                valid_url = False
             required_strings = (
+                "node_id",
                 "panel_email",
                 "client_uuid",
                 "sub_id",
@@ -546,12 +725,13 @@ class WaveMeshInternalApiClient:
             )
             if (
                 any(not isinstance(result.get(key), str) or not result[key] for key in required_strings)
-                or not isinstance(result.get("desired_version"), int)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result["node_id"])
+                or type(result.get("desired_version")) is not int
                 or result["desired_version"] < 1
-                or not isinstance(result.get("primary_inbound_id"), int)
+                or type(result.get("primary_inbound_id")) is not int
                 or result["primary_inbound_id"] < 1
                 or result["protocol"] != "vless"
-                or not result["subscription_url"].startswith("https://")
+                or not valid_url
             ):
                 raise InternalApiError(
                     "Unexpected ready access material response",

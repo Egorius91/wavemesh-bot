@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 from bot.utils.text import safe_edit_or_send
 
 router = Router()
+from bot.handlers.admin.provisioning import reconcile as reconcile_admin_grant
+from bot.handlers.admin.provisioning import select_entry, catalog_page
+router.callback_query.register(reconcile_admin_grant, F.data.startswith('admin_grant_reconcile:'))
+router.callback_query.register(select_entry, F.data.startswith('admin_grant_entry:'))
+router.callback_query.register(catalog_page, F.data.startswith('admin_entry_page:'))
 USERS_PER_PAGE = 20
 ACCESS_PROVISIONING_TIMEOUT_SECONDS = 120
 ACCESS_PROVISIONING_POLL_SECONDS = 2
@@ -274,6 +279,11 @@ async def start_add_key(callback: CallbackQuery, state: FSMContext):
     if not user:
         await callback.answer('Пользователь не найден', show_alert=True)
         return
+    from bot.services.runtime_mode import saas_client_mode_enabled
+    if saas_client_mode_enabled():
+        from bot.handlers.admin.provisioning import begin
+        await begin(callback, state, user)
+        return
     servers = get_active_servers()
     if not servers:
         await callback.answer('❌ Нет активных серверов', show_alert=True)
@@ -353,6 +363,10 @@ async def process_add_key_days(message: Message, state: FSMContext):
     await state.update_data(add_key_days=days)
     await state.set_state(AdminStates.add_key_confirm)
     data = await state.get_data()
+    from bot.services.runtime_mode import saas_client_mode_enabled
+    if saas_client_mode_enabled():
+        await safe_edit_or_send(message, f"Подтвердите выдачу пользователю {data.get('add_key_user_telegram_id')} на {days} дней, трафик {data.get('add_key_traffic_gb', 0)} ГБ (0 = без лимита). Entry: {escape_html(data.get('add_key_node_name', ''))}.", reply_markup=add_key_confirm_kb(), force_new=True)
+        return
     from database.requests import get_server_by_id
     server = get_server_by_id(data['add_key_server_id'])
     traffic_text = f"{data.get('add_key_traffic_gb', 0)} ГБ" if data.get('add_key_traffic_gb', 0) > 0 else 'без лимита'
@@ -361,6 +375,11 @@ async def process_add_key_days(message: Message, state: FSMContext):
 @router.callback_query(F.data == 'admin_add_key_confirm')
 async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
     """Подтверждение и создание ключа."""
+    from bot.services.runtime_mode import saas_client_mode_enabled
+    if saas_client_mode_enabled():
+        from bot.handlers.admin.provisioning import confirm
+        await confirm(callback, state)
+        return
     if not is_admin(callback.from_user.id):
         await callback.answer('⛔ Доступ запрещён', show_alert=True)
         return
@@ -387,79 +406,6 @@ async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
     try:
         admin_tariff = get_admin_tariff()
         tariff_id = admin_tariff['id']
-
-        from bot.services.runtime_mode import saas_client_mode_enabled
-        if saas_client_mode_enabled():
-            from bot.services.access_shadow import (
-                get_access_shadow_snapshot,
-                sync_access_shadow_snapshot,
-            )
-            from bot.services.internal_api import internal_api_client
-            from database.db_keys import create_initial_vpn_key, delete_vpn_key
-
-            await callback.answer('Создание ключа запущено')
-            callback_closed = True
-            await safe_edit_or_send(
-                callback.message,
-                '⏳ <b>Создаём ключ</b>\n\nЗапрос принят. Ожидаем подтверждение Entry-сервера не более двух минут.',
-            )
-            key_id = create_initial_vpn_key(
-                user_id=user_id,
-                tariff_id=tariff_id,
-                days=days,
-                traffic_limit=traffic_limit_bytes,
-            )
-            access_submitted = False
-            try:
-                snapshot = get_access_shadow_snapshot(key_id)
-                if snapshot is None:
-                    raise RuntimeError('Не удалось подготовить локальную запись ключа')
-                await sync_access_shadow_snapshot(
-                    snapshot,
-                    reason='admin_access_provisioning',
-                )
-                provisioned = await internal_api_client.create_access(
-                    telegram_id=user_telegram_id,
-                    legacy_key_id=key_id,
-                    duration_days=days,
-                    traffic_limit_bytes=traffic_limit_bytes,
-                    device_limit=admin_tariff.get('max_ips', 1),
-                    idempotency_key=f'admin-access-provision-{key_id}',
-                )
-                access_submitted = True
-                access_id = provisioned['access_id']
-                command_id = provisioned.get('command_id')
-                logger.info(
-                    'Admin access provisioning submitted: key_id=%s access_id=%s command_id=%s',
-                    key_id,
-                    access_id,
-                    command_id,
-                )
-                material = await wait_for_access_material(
-                    internal_api_client,
-                    access_id,
-                )
-                from database.db_keys import update_vpn_key_config
-                if not update_vpn_key_config(
-                    key_id=key_id,
-                    server_id=server_id,
-                    panel_inbound_id=material['primary_inbound_id'],
-                    panel_email=material['panel_email'],
-                    client_uuid=material['client_uuid'],
-                    sub_id=material['sub_id'],
-                ):
-                    raise RuntimeError('Could not finalize the local VPN key')
-            except Exception:
-                if not access_submitted:
-                    delete_vpn_key(key_id)
-                raise
-
-            await safe_edit_or_send(
-                callback.message,
-                '✅ <b>Ключ успешно создан</b>\n\nКонфигурация подтверждена Entry-сервером и сохранена в боте.',
-            )
-            await _show_user_view_edit(callback, state, user_telegram_id)
-            return
 
         client = get_client_from_server_data(server)
         if subscription_mode:

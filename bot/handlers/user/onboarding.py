@@ -74,6 +74,11 @@ def _get_owned_key(key_id: int, telegram_id: int) -> Optional[dict]:
 
 def _get_available_onboarding_keys(telegram_id: int) -> list[dict]:
     from database.requests import get_user_keys_for_display, is_traffic_exhausted
+    from bot.services.runtime_mode import saas_client_mode_enabled
+
+    if saas_client_mode_enabled():
+        # Local rows are navigation hints only; delivery rechecks SaaS readiness.
+        return [key for key in get_user_keys_for_display(telegram_id) if key.get("saas_managed")]
 
     return [
         key

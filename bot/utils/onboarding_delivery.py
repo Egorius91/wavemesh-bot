@@ -14,6 +14,17 @@ logger = logging.getLogger(__name__)
 
 
 async def _access_value(key: dict) -> Optional[str]:
+    from bot.services.runtime_mode import saas_client_mode_enabled
+    if saas_client_mode_enabled():
+        from bot.handlers.user.saas_keys import dashboard
+        from bot.handlers.user.payments.payment_return import load_verified_ready_payment_return
+        result = await dashboard(key["telegram_id"])
+        matches = [a for a in result.get("accesses", []) if isinstance(a, dict)
+                   and a.get("legacy_key_id") == str(key["id"]) and a.get("authority") == "managed"]
+        if len(matches) != 1:
+            return None
+        verified = await load_verified_ready_payment_return(telegram_id=key["telegram_id"], access_id=matches[0]["access_id"])
+        return verified.subscription_url
     from bot.services.vpn_api import (
         get_client,
         get_subscription_url_for_key,
@@ -42,6 +53,12 @@ async def send_onboarding_connection(
     from bot.utils.message_editor import get_message_data
     from bot.utils.page_renderer import build_page_keyboard
     from bot.utils.text import safe_edit_or_send
+    from bot.services.runtime_mode import saas_client_mode_enabled
+    from bot.services.private_chat import private_actor_id
+
+    if saas_client_mode_enabled() and (private_actor_id(callback) is None
+            or key.get("telegram_id") != private_actor_id(callback)):
+        return False
 
     try:
         raw_value = await _access_value(key)
@@ -61,7 +78,7 @@ async def send_onboarding_connection(
         )
         return False
 
-    if key.get("sub_id") and raw_value.startswith(("http://", "https://")):
+    if not saas_client_mode_enabled() and key.get("sub_id") and raw_value.startswith(("http://", "https://")):
         from bot.services.subscription_readiness import wait_for_subscription_ready
 
         ready = await wait_for_subscription_ready(

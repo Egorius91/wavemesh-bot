@@ -66,7 +66,7 @@ class SaasRouterSurfaceTests(unittest.TestCase):
         branch = first_mode_if(PAYMENTS_INIT)
         self.assertEqual(
             imports_in(branch.body),
-            {"payment_return", "provider_billing", "provider_routing", "saas"},
+            {"payment_return", "provider_billing", "provider_routing", "saas", "checkout"},
         )
         legacy_imports = imports_in(branch.orelse)
         self.assertTrue(
@@ -93,10 +93,13 @@ class SaasRouterSurfaceTests(unittest.TestCase):
             order.index("provider_routing_router"),
             order.index("saas_router"),
         )
+        self.assertLess(order.index("checkout_router"), order.index("provider_routing_router"))
 
     def test_trial_and_tariff_routers_exist_only_in_legacy_branch(self) -> None:
         branch = first_mode_if(USER_INIT, negated=True)
         self.assertEqual(imports_in(branch.body), {"trial", "tariffs"})
+        self.assertEqual(imports_in(branch.orelse), {"managed_trial", "saas_keys"})
+        self.assertEqual(included_routers(branch.orelse), ["managed_trial_router", "saas_keys_router"])
 
     def test_known_legacy_links_are_blocked_without_matching_opaque_return(self) -> None:
         tree = ast.parse(START.read_text(encoding="utf-8"), filename=str(START))
@@ -136,13 +139,12 @@ class SaasRouterSurfaceTests(unittest.TestCase):
         self.assertFalse(matcher("pay_abcdefghijklmnopqrstuvwxyzABCDEF"))
         self.assertFalse(matcher(None))
 
-    def test_start_skips_local_catalog_and_trial_in_saas_mode(self) -> None:
+    def test_start_skips_local_catalog_and_legacy_billing_in_saas_mode(self) -> None:
         source = START.read_text(encoding="utf-8")
         self.assertIn(
             'if saas_client_mode_enabled():\n        return ""',
             source,
         )
-        self.assertIn("not saas_client_mode_enabled()", source)
         self.assertIn("if args and not saas_mode:", source)
         self.assertIn(
             "if args and not saas_mode and args.startswith('bill'):",
