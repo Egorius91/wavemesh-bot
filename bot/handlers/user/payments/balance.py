@@ -1,4 +1,7 @@
 import logging
+import re
+import secrets
+from decimal import Decimal, InvalidOperation
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -12,6 +15,33 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
+def _balance_offer(tariff_id: int, key_id: int, telegram_id: int):
+    """Current public RUB offer and actor-owned renewal target, without writes."""
+    from database.requests import (get_tariff_by_id, get_key_details_for_user,
+                                   is_referral_enabled, get_referral_reward_type)
+    if type(tariff_id) is not int or tariff_id <= 0 or not is_referral_enabled() or get_referral_reward_type() != 'balance':
+        return None
+    tariff = get_tariff_by_id(tariff_id)
+    if not tariff or tariff.get('is_active') != 1:
+        return None
+    if key_id is not None:
+        if type(key_id) is not int or key_id <= 0:
+            return None
+        key = get_key_details_for_user(key_id, telegram_id)
+        if not key:
+            return None
+        from bot.utils.groups import get_tariffs_for_renewal
+        if not any(row['id'] == tariff_id for row in get_tariffs_for_renewal(key.get('tariff_id', 0))):
+            return None
+    try:
+        cents = Decimal(str(tariff.get('price_rub', 0))) * 100
+        if not cents.is_finite() or cents != cents.to_integral_value() or not 0 < cents <= 9223372036854775807:
+            return None
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    return {'tariff_id': tariff_id, 'name': tariff['name'], 'price_cents': int(cents),
+            'duration_days': tariff['duration_days'], 'traffic_limit_gb': tariff.get('traffic_limit_gb', 0) or 0}
+
 async def _show_balance_payment_screen(callback: CallbackQuery, state: FSMContext, tariff_id: int, user_internal_id: int, key_id: int=None):
     """
     Показать экран оплаты с учётом баланса по ТЗ.
@@ -24,39 +54,44 @@ async def _show_balance_payment_screen(callback: CallbackQuery, state: FSMContex
     
     Сохраняет в FSM state: balance_to_deduct, tariff_price_cents, tariff_id, key_id
     """
-    from database.requests import get_tariff_by_id, get_user_balance, is_cards_enabled, is_yookassa_qr_configured
+    from database.requests import get_user_balance, is_cards_enabled, is_yookassa_qr_configured
     from bot.keyboards.user import balance_payment_kb
-    tariff = get_tariff_by_id(tariff_id)
-    if not tariff:
-        await callback.answer('❌ Тариф не найден', show_alert=True)
-        return
-    tariff_price_cents = int(tariff.get('price_rub', 0) * 100)
-    if tariff_price_cents <= 0:
-        await callback.answer('❌ Ошибка: цена тарифа не задана', show_alert=True)
-        return
-    balance_cents = get_user_balance(user_internal_id)
-    balance_to_deduct = min(balance_cents, tariff_price_cents)
-    remaining_cents = max(0, tariff_price_cents - balance_to_deduct)
-    await state.update_data(balance_to_deduct=balance_to_deduct, tariff_price_cents=tariff_price_cents, tariff_id=tariff_id, key_id=key_id)
-    price_str = _format_price_compact(tariff_price_cents)
-    balance_str = _format_price_compact(balance_cents)
-    deduct_str = _format_price_compact(balance_to_deduct)
-    remaining_str = _format_price_compact(remaining_cents)
-    text = f"💳 <b>Оплата тарифа «{escape_html(tariff['name'])}»</b>\n\n💰 Сумма: {price_str}\n💎 Ваш баланс: {balance_str}\n\n✅ С баланса будет списано: {deduct_str}\n💳 К оплате: {remaining_str}"
-    cards_enabled = is_cards_enabled()
-    yookassa_qr_enabled = is_yookassa_qr_configured()
-    cards_via_yookassa_direct = _is_cards_via_yookassa_direct()
-    available_methods = []
-    if yookassa_qr_enabled:
-        available_methods.append('qr')
-    if cards_enabled:
-        if cards_via_yookassa_direct:
-            available_methods.append('card')
-        elif remaining_cents >= 10000:
-            available_methods.append('card')
-    if remaining_cents > 0 and (not available_methods):
-        text += '\n\n💡 <b>Для доплаты этой суммы нет подходящего способа оплаты.</b>\nПоднакопите ещё немного на реферальном балансе\nили оплатите тариф без использования баланса.'
-    await safe_edit_or_send(callback.message, text, reply_markup=balance_payment_kb(tariff_id=tariff_id, key_id=key_id, balance_cents=balance_cents, tariff_price_cents=tariff_price_cents, balance_to_deduct=balance_to_deduct, remaining_cents=remaining_cents, cards_enabled=cards_enabled, yookassa_qr_enabled=yookassa_qr_enabled, cards_via_yookassa_direct=cards_via_yookassa_direct))
+    from bot.services.user_locks import user_locks
+    async with user_locks[user_internal_id]:
+        offer = _balance_offer(tariff_id, key_id, callback.from_user.id)
+        if offer is None:
+            await state.update_data(balance_quote=None)
+            await callback.answer('❌ Тариф недоступен. Выберите тариф ещё раз.', show_alert=True)
+            return
+        tariff_price_cents = offer['price_cents']
+        balance_cents = get_user_balance(user_internal_id)
+        balance_to_deduct = min(balance_cents, tariff_price_cents)
+        remaining_cents = max(0, tariff_price_cents - balance_to_deduct)
+        token = secrets.token_hex(8)
+        # This dedicated object is not reconstructed from shared legacy FSM fields.
+        quote = {'token': token, 'owner_id': user_internal_id, 'key_id': key_id, 'terms': offer}
+        await state.update_data(balance_quote=quote, balance_to_deduct=balance_to_deduct,
+            tariff_price_cents=tariff_price_cents, tariff_id=tariff_id, key_id=key_id)
+        # Keep the visible button ordered with the quote it confirms.
+        price_str = _format_price_compact(tariff_price_cents)
+        balance_str = _format_price_compact(balance_cents)
+        deduct_str = _format_price_compact(balance_to_deduct)
+        remaining_str = _format_price_compact(remaining_cents)
+        text = f"💳 <b>Оплата тарифа «{escape_html(offer['name'])}»</b>\n\n💰 Сумма: {price_str}\n💎 Ваш баланс: {balance_str}\n\n✅ С баланса будет списано: {deduct_str}\n💳 К оплате: {remaining_str}"
+        cards_enabled = is_cards_enabled()
+        yookassa_qr_enabled = is_yookassa_qr_configured()
+        cards_via_yookassa_direct = _is_cards_via_yookassa_direct()
+        available_methods = []
+        if yookassa_qr_enabled:
+            available_methods.append('qr')
+        if cards_enabled:
+            if cards_via_yookassa_direct:
+                available_methods.append('card')
+            elif remaining_cents >= 10000:
+                available_methods.append('card')
+        if remaining_cents > 0 and (not available_methods):
+            text += '\n\n💡 <b>Для доплаты этой суммы нет подходящего способа оплаты.</b>\nПоднакопите ещё немного на реферальном балансе\nили оплатите тариф без использования баланса.'
+        await safe_edit_or_send(callback.message, text, reply_markup=balance_payment_kb(tariff_id=tariff_id, key_id=key_id, balance_cents=balance_cents, tariff_price_cents=tariff_price_cents, balance_to_deduct=balance_to_deduct, remaining_cents=remaining_cents, cards_enabled=cards_enabled, yookassa_qr_enabled=yookassa_qr_enabled, cards_via_yookassa_direct=cards_via_yookassa_direct, balance_quote_token=token))
     await callback.answer()
 
 @router.callback_query(F.data == 'pay_use_balance')
@@ -140,46 +175,53 @@ async def balance_pay_handler(callback: CallbackQuery, state: FSMContext):
 async def pay_with_balance_handler(callback: CallbackQuery, state: FSMContext):
     """
     Полная оплата с баланса (когда remaining_cents == 0).
-    Атомарная операция: списать + выдать ключ.
+    Одно подтверждённое предложение: проверить условия, списать, выдать ключ.
+    Блокировка/FSM не заменяют durable transaction списания и выдачи.
     
     При оплате балансом реферальные вознаграждения НЕ начисляются.
     """
-    from database.requests import get_user_internal_id, get_user_balance, deduct_from_balance, get_tariff_by_id, get_or_create_user, create_initial_vpn_key
+    from database.requests import get_user_internal_id, get_user_balance, deduct_from_balance, create_initial_vpn_key
     from bot.services.user_locks import user_locks
     from bot.services.key_lifecycle import renew_key_access
-    data = await state.get_data()
-    balance_to_deduct = data.get('balance_to_deduct', 0)
-    tariff_price_cents = data.get('tariff_price_cents', 0)
-    tariff_id = data.get('tariff_id')
-    key_id = data.get('key_id')
-    parts = callback.data.split(':')
-    if not tariff_id:
-        tariff_id = int(parts[1]) if len(parts) > 1 else None
-    if not key_id:
-        key_id = int(parts[2]) if len(parts) > 2 and parts[2] else None
-    if not tariff_id:
-        await callback.answer('❌ Ошибка: тариф не определён', show_alert=True)
+    expired = 'Предложение оплаты устарело. Выберите тариф ещё раз.'
+    match = re.fullmatch(r'pay_with_balance:([a-f0-9]{16})', callback.data or '')
+    if not match or callback.from_user is None:
+        await callback.answer(expired, show_alert=True)
         return
     telegram_id = callback.from_user.id
-    (user, _) = get_or_create_user(
-        telegram_id,
-        callback.from_user.username,
-        first_name=getattr(callback.from_user, 'first_name', None),
-        last_name=getattr(callback.from_user, 'last_name', None),
-    )
-    user_internal_id = user['id']
-    tariff = get_tariff_by_id(tariff_id)
-    if not tariff:
-        await callback.answer('❌ Тариф не найден', show_alert=True)
+    user_internal_id = get_user_internal_id(telegram_id)
+    if not user_internal_id:
+        await callback.answer(expired, show_alert=True)
         return
-    days = tariff['duration_days']
     async with user_locks[user_internal_id]:
+        data = await state.get_data()
+        quote = data.get('balance_quote')
+        terms = quote.get('terms') if isinstance(quote, dict) else None
+        if (not isinstance(terms, dict) or quote.get('token') != match[1] or
+            type(quote.get('owner_id')) is not int or quote['owner_id'] != user_internal_id or
+            type(terms.get('tariff_id')) is not int or type(terms.get('price_cents')) is not int or
+            terms['price_cents'] <= 0 or (quote.get('key_id') is not None and
+            (type(quote['key_id']) is not int or quote['key_id'] <= 0))):
+            await callback.answer(expired, show_alert=True)
+            return
+        # Consume before later awaits, then re-read eligibility/ownership/terms.
+        # Failed/uncertain delivery never makes this same quote payable again.
+        await state.update_data(balance_quote=None, balance_to_deduct=0)
+        tariff_id, key_id = terms['tariff_id'], quote.get('key_id')
+        offer = _balance_offer(tariff_id, key_id, telegram_id)
+        if offer is None or offer != terms:
+            await callback.answer(expired, show_alert=True)
+            return
+        tariff_price_cents = offer['price_cents']
+        days = offer['duration_days']
         current_balance = get_user_balance(user_internal_id)
         if current_balance < tariff_price_cents:
             await callback.answer('❌ Недостаточно средств на балансе', show_alert=True)
             return
-        actual_deduct = min(current_balance, tariff_price_cents)
-        deduct_from_balance(user_internal_id, actual_deduct)
+        actual_deduct = tariff_price_cents
+        if not deduct_from_balance(user_internal_id, actual_deduct):
+            await callback.answer('❌ Недостаточно средств на балансе', show_alert=True)
+            return
         renew_result = None
         if key_id:
             renew_result = await renew_key_access(
@@ -190,10 +232,9 @@ async def pay_with_balance_handler(callback: CallbackQuery, state: FSMContext):
             )
             logger.info(f'Ключ {key_id} продлён на {days} дней за баланс {actual_deduct} коп')
         else:
-            traffic_limit_bytes = (tariff.get('traffic_limit_gb', 0) or 0) * 1024 ** 3
+            traffic_limit_bytes = offer['traffic_limit_gb'] * 1024 ** 3
             new_key_id = create_initial_vpn_key(user_internal_id, tariff_id, days, traffic_limit=traffic_limit_bytes)
             logger.info(f'Создан черновик ключа {new_key_id} для user {user_internal_id} за баланс {actual_deduct} коп')
-    await state.update_data(balance_to_deduct=0)
 
     def format_price_compact(cents: int) -> str:
         if cents >= 10000:
