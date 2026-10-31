@@ -210,7 +210,8 @@ def balance_payment_kb(
     remaining_cents: int = 0,
     cards_enabled: bool = False,
     yookassa_qr_enabled: bool = False,
-    cards_via_yookassa_direct: bool = False
+    cards_via_yookassa_direct: bool = False,
+    *, balance_quote_token: str
 ) -> InlineKeyboardMarkup:
     """
     Клавиатура оплаты с учётом баланса.
@@ -241,11 +242,10 @@ def balance_payment_kb(
     can_pay_full = remaining_cents == 0
     
     if can_pay_full:
-        suffix = f":{tariff_id}:{key_id}" if key_id else f":{tariff_id}"
         builder.row(
             InlineKeyboardButton(
                 text="💎 Оплатить балансом",
-                callback_data=f"pay_with_balance{suffix}"
+                callback_data=f"pay_with_balance:{balance_quote_token}"
             )
         )
     else:
