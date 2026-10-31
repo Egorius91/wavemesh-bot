@@ -7,6 +7,7 @@ import logging
 import json
 
 from bot.utils.text import safe_edit_or_send
+from bot.utils.admin import is_admin
 from bot.keyboards.admin_users import (
     key_delete_confirm_kb,
     sync_deleted_menu_kb,
@@ -27,6 +28,18 @@ from bot.services.vpn_api import get_client_from_server_data
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+async def _require_admin(handler, callback: CallbackQuery, data: dict):
+    """Authorize matched cleanup callbacks before parsing or business effects."""
+    actor = callback.from_user
+    if actor is None or not is_admin(actor.id):
+        await callback.answer('⛔ Доступ запрещён', show_alert=True)
+        return None
+    return await handler(callback, data)
+
+
+router.callback_query.middleware(_require_admin)
 
 
 # ──────────────────────────── Удаление одного ключа ────────────────────────────
