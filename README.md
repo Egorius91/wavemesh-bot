@@ -56,6 +56,21 @@ Before deployment, edit `config.py` and set real values for:
 - payment provider settings
 - server settings through the admin panel
 
+## Panel TLS trust
+
+HTTPS panel requests and public subscription downloads verify both the certificate
+chain and the requested hostname using the Python/aiohttp process trust store.
+An untrusted or mismatched certificate fails before HTTP credentials are sent.
+IP-based cookie authentication and explicitly configured HTTP records retain
+their existing behavior.
+
+For a private CA, configure the service's system trust store or provide a CA
+bundle through `SSL_CERT_FILE` before starting the Python process. This is
+process-wide trust: preserve the public CA roots needed by Telegram and payment
+providers as well. The configured panel hostname/IP must match the certificate's
+subject alternative name. There is no application option to disable verification.
+Certificate/trust-store changes require their own operational deployment review.
+
 ## Production files
 
 Default project directory:

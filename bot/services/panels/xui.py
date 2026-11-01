@@ -103,8 +103,8 @@ class XUIClient(BaseVPNClient):
     async def _ensure_session(self) -> aiohttp.ClientSession:
         """Создаёт сессию если её нет."""
         if self.session is None or self.session.closed:
-            # Unsafe=True важно для IP-адресов и самоподписанных сертификатов
-            connector = aiohttp.TCPConnector(ssl=False)
+            # IP-host cookies are allowed below; TLS uses aiohttp's verified trust store.
+            connector = aiohttp.TCPConnector()
             jar = aiohttp.CookieJar(unsafe=True)
             try:
                 timeout_seconds = float(RETRY_CONFIG.get("timeout_seconds", DEFAULT_PANEL_TIMEOUT_SECONDS))
@@ -2562,7 +2562,7 @@ class XUIClient(BaseVPNClient):
         for url in candidates:
             try:
                 # Важно: Не используем _request, так как это публичный endpoint
-                async with session.get(url, ssl=False) as response:
+                async with session.get(url) as response:
                     logger.info(
                         "Subscription URL probe for server %s -> %s",
                         self.server.get('name', self.server_id),
