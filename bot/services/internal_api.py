@@ -689,9 +689,11 @@ class WaveMeshInternalApiClient:
         return {"tenant_id":result["tenant_id"], "service_client_id":result["service_client_id"], "entries":entries}
 
     async def get_access_material(self, access_id: str) -> dict[str, Any]:
+        if not isinstance(access_id, str) or not _TRIAL_ID.fullmatch(access_id):
+            raise InternalApiError("Invalid access identity", code="INTERNAL_API_INVALID_REQUEST")
         result = await self._request(
             "GET",
-            f"bot/accesses/{access_id}/material",
+            f"bot/accesses/{access_id}/material?material_version=2",
         )
         if (
             not isinstance(result, dict)
@@ -704,6 +706,12 @@ class WaveMeshInternalApiClient:
                 code="INTERNAL_API_INVALID_RESPONSE",
             )
         if result["ready"]:
+            if "material_version" in result or "kind" in result:
+                from bot.services.service_subscription import service_material
+                try:
+                    return service_material(result, access_id)
+                except (ValueError, TypeError):
+                    raise InternalApiError("Invalid service subscription material", code="INTERNAL_API_INVALID_RESPONSE") from None
             from urllib.parse import urlsplit
             try:
                 raw_url = result["subscription_url"]

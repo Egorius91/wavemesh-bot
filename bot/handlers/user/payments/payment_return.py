@@ -264,6 +264,11 @@ async def materialize_ready_payment_return(
         access = resolved.access
         material = resolved.material
 
+        if material.get("material_version") == 2:
+            # One service access has several Entry identities. It cannot be
+            # represented by choosing one panel credential for the legacy key.
+            raise InternalApiError("Service subscription has no legacy panel projection", code="LOCAL_PROJECTION_NOT_APPLICABLE")
+
         tariffs = await internal_api_client.list_tariffs()
         saas_tariff = _single_saas_tariff(tariffs, access.get("tariff_id"))
 
@@ -401,6 +406,9 @@ async def process_ready_payment_return(
         access_id=access_id,
     )
     await _render_verified_subscription(message, verified)
+
+    if verified.material.get("material_version") == 2:
+        return
 
     try:
         materialization = await materialize_ready_payment_return(

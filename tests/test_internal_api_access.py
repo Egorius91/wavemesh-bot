@@ -5,6 +5,26 @@ from bot.services.internal_api import InternalApiError, WaveMeshInternalApiClien
 
 
 class InternalApiAccessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_service_material_negotiates_version_without_selecting_entry_credentials(self):
+        from bot.services.service_subscription import service_material
+        body = {"access_id": "access-12345678", "ready": True, "status": "ready", "desired_version": 2,
+            "material_version": 2, "kind": "service_subscription", "subscription_url":
+            "https://service.example.invalid/api/subscriptions/11111111-2222-4333-8444-555555555555/wvs1_" + "A" * 43}
+        client = WaveMeshInternalApiClient(); client._request = AsyncMock(return_value=body)
+        self.assertEqual(await client.get_access_material(body["access_id"]), service_material(body, body["access_id"]))
+        client._request.assert_awaited_once_with("GET", "bot/accesses/access-12345678/material?material_version=2")
+        for patch in ({"material_version": 3}, {"material_version": 2.0}, {"node_id": "first-entry"}, {"kind": "node_native"},
+                      {"subscription_url": "https://private_canary@service.invalid/sub/private_canary"}):
+            client._request = AsyncMock(return_value=body | patch)
+            with self.assertRaises(InternalApiError) as caught: await client.get_access_material(body["access_id"])
+            self.assertNotIn("private_canary", str(caught.exception))
+
+    async def test_material_identity_cannot_inject_a_path_or_override_negotiation(self):
+        client = WaveMeshInternalApiClient(); client._request = AsyncMock()
+        for access_id in ("../other", "access?material_version=1", None):
+            with self.assertRaises(InternalApiError): await client.get_access_material(access_id)
+        client._request.assert_not_awaited()
+
     async def test_create_access_uses_stable_safe_payload(self):
         client = WaveMeshInternalApiClient()
         client._request = AsyncMock(

@@ -275,6 +275,29 @@ def private_message():
 
 
 class PaymentReturnDirectDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_service_subscription_delivers_without_any_legacy_projection(self):
+        material = {"access_id": ACCESS_ID, "status": "ready", "ready": True,
+                    "material_version": 2, "kind": "service_subscription", "desired_version": 4,
+                    "subscription_url": "https://account.example.invalid/api/subscriptions/11111111-2222-4333-8444-555555555555/wvs1_" + "A" * 43}
+        verified = VerifiedReadyPaymentReturn(access_id=ACCESS_ID, telegram_id=TELEGRAM_ID,
+            subscription_url=material["subscription_url"], access=ready_access(), material=material)
+        message = private_message()
+        with (
+            patch.object(payment_return, "load_verified_ready_payment_return", AsyncMock(return_value=verified)),
+            patch.object(payment_return, "_render_verified_subscription", AsyncMock()) as render,
+            patch.object(payment_return, "materialize_ready_payment_return", AsyncMock()) as project,
+            patch.object(payment_return, "_render_projection_confirmation", AsyncMock()) as confirm,
+            patch.object(payment_return.internal_api_client, "list_tariffs", AsyncMock()) as tariffs,
+        ):
+            await process_ready_payment_return(message=message, telegram_id=TELEGRAM_ID, access_id=ACCESS_ID)
+            render.assert_awaited_once_with(message, verified)
+            project.assert_not_awaited()
+            confirm.assert_not_awaited()
+            with self.assertRaises(InternalApiError) as caught:
+                await materialize_ready_payment_return(telegram_id=TELEGRAM_ID, access_id=ACCESS_ID, verified=verified)
+            self.assertEqual(caught.exception.code, "LOCAL_PROJECTION_NOT_APPLICABLE")
+            tariffs.assert_not_awaited()
+
     def verified(self):
         return VerifiedReadyPaymentReturn(
             access_id=ACCESS_ID,
