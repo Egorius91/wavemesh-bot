@@ -31,7 +31,15 @@ def actions(access=None):
         if access.get("status") == "ready" and access.get("enabled") is True:
             rows.append([InlineKeyboardButton(text="Получить конфигурацию", callback_data="saas_config:"+access_id)])
         key_id = access.get("legacy_key_id")
-        if isinstance(key_id, str) and key_id.isdigit():
+        if access.get("subscription_kind") == "service_subscription":
+            from bot.services.service_subscription import renewal_address
+            try:
+                url = renewal_address(access.get("renewal_url"), access_id)
+            except (ValueError, TypeError):
+                url = None
+            if url:
+                rows.append([InlineKeyboardButton(text="Продлить в кабинете", url=url)])
+        elif isinstance(key_id, str) and key_id.isdigit():
             rows.append([InlineKeyboardButton(text="Продлить", callback_data="key_renew:"+key_id)])
             if access.get("status") == "ready":
                 rows.append([InlineKeyboardButton(text="Как подключиться", callback_data="onboarding_ready:"+key_id)])
