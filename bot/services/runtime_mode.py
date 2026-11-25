@@ -18,6 +18,10 @@ def saas_client_mode_enabled() -> bool:
     return env_flag("WAVEMESH_SAAS_CLIENT_MODE", default=False)
 
 
+def new_trials_enabled() -> bool:
+    return os.getenv("NEW_TRIALS_ENABLED") == "true"
+
+
 def legacy_commercial_writes_enabled() -> bool:
     """Allow legacy local orders, trial activation and payment mutations."""
     if saas_client_mode_enabled():

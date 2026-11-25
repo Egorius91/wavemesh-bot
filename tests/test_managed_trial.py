@@ -55,6 +55,9 @@ class TrialClientTests(IsolatedAsyncioTestCase):
 
 class TrialHandlerTests(IsolatedAsyncioTestCase):
     def setUp(self):
+        enabled = patch.dict("os.environ", {"NEW_TRIALS_ENABLED": "true"})
+        enabled.start()
+        self.addCleanup(enabled.stop)
         self.mode = patch.object(trial, "saas_client_mode_enabled", return_value=True)
         self.mode.start()
         self.addCleanup(self.mode.stop)
@@ -94,6 +97,9 @@ class TrialHandlerTests(IsolatedAsyncioTestCase):
              patch("bot.utils.live_page_renderer.render_live_page", AsyncMock()) as render:
             await start._render_main_page(message())
             self.assertTrue(render.await_args.kwargs["visibility"]["btn_trial"])
+            self.client.get_trial.side_effect = InternalApiError("closed", status=409, code="NEW_TRIALS_CLOSED")
+            await start._render_main_page(message())
+            self.assertFalse(render.await_args.kwargs["visibility"]["btn_trial"])
 
     async def test_lost_post_response_offers_readback_and_never_auto_reposts(self):
         self.client.activate_trial.side_effect = InternalApiError("SECRET", code="INTERNAL_API_TIMEOUT", retryable=True)
@@ -106,11 +112,42 @@ class TrialHandlerTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.client.activate_trial.await_count, 1)
         self.client.get_trial.assert_awaited_once()
 
+    async def test_closed_beta_hides_trial_menu_and_blocks_legacy_callback(self):
+        from bot.handlers.user import start, trial as legacy
+        callback = CallbackQuery(id="fixture", chat_instance="fixture", message=message(),
+                                 from_user=User(id=123, is_bot=False, first_name="Fixture"), data="trial_activate")
+        with patch.dict("os.environ", {"NEW_TRIALS_ENABLED": "false"}), \
+             patch.object(start, "_build_tariff_text", return_value=""), \
+             patch.object(start, "is_referral_enabled", return_value=False), \
+             patch("bot.utils.live_page_renderer.render_live_page", AsyncMock()) as render, \
+             patch.object(legacy, "legacy_commercial_writes_enabled", return_value=True), \
+             patch("database.requests.mark_trial_used", side_effect=AssertionError("unexpected write")), \
+             patch.object(CallbackQuery, "answer", AsyncMock()) as answer:
+            await start._render_main_page(message())
+            self.assertFalse(render.await_args.kwargs["visibility"]["btn_trial"])
+            await legacy.activate_trial_subscription(callback, None)
+            self.assertIn("недоступна", answer.await_args.args[0])
+
     async def test_absent_trial_offers_explicit_activation_without_writing(self):
-        self.client.get_trial.side_effect = InternalApiError("not found", status=404)
+        self.client.get_trial.side_effect = InternalApiError("not found", status=404, code="TRIAL_NOT_ACTIVATED")
         await trial.trial_command(message())
         self.client.activate_trial.assert_not_awaited()
         self.assertIn("trial_activate", str(self.render.await_args.kwargs["reply_markup"]))
+
+    async def test_closed_new_trial_callback_only_reads_existing_activation(self):
+        with patch.dict("os.environ", {"NEW_TRIALS_ENABLED": "false"}):
+            await trial._show(message(), 123, activate=True)
+            self.client.get_trial.assert_awaited_once_with("canonical-user")
+            self.client.activate_trial.assert_not_awaited()
+            self.assertIn("готовится", self.render.await_args.args[1])
+            self.client.get_trial.side_effect = InternalApiError("closed", status=409, code="NEW_TRIALS_CLOSED")
+            await trial.trial_command(message())
+            self.assertNotIn("trial_activate", str(self.render.await_args.kwargs["reply_markup"]))
+            self.assertIn("закрыты", self.render.await_args.args[1])
+            self.client.get_trial.side_effect = InternalApiError("read timeout", status=503)
+            await trial._show(message(), 123, activate=True)
+            self.assertIn("Не удалось проверить", self.render.await_args.args[1])
+            self.client.activate_trial.assert_not_awaited()
 
     async def test_missing_profile_does_not_mean_unused_trial(self):
         self.client.get_telegram_dashboard.side_effect = InternalApiError("not found", status=404)

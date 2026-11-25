@@ -3,7 +3,9 @@
 Requires SaaS PR275's activation/status contract and its existing internal and
 Node pipeline gates. The Bot uses the existing service token, tenant and scopes
 (`bot:users:read`, `bot:access:read`, `bot:access:write`). No new runtime flag is
-enabled by this source change.
+enabled by default. New trials require `NEW_TRIALS_ENABLED=true` in both the
+Bot and the SaaS API. The closed paid beta leaves this switch unset or false.
+The status command and existing access remain available while new trials are closed.
 
 In SaaS mode, the trial menu and `/trial` read the canonical user's activation.
 Only explicit activation submits `POST bot/trials`; user/offer uniqueness in SaaS
