@@ -3,7 +3,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
 from bot.utils.text import safe_edit_or_send
-from bot.services.runtime_mode import legacy_commercial_writes_enabled
+from bot.services.runtime_mode import legacy_commercial_writes_enabled, new_trials_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ async def show_trial_subscription(callback: CallbackQuery):
 
     user_id = callback.from_user.id
 
-    if not is_trial_enabled():
+    if not new_trials_enabled() or not is_trial_enabled():
         await callback.answer('❌ Пробная подписка недоступна', show_alert=True)
         return
     if get_trial_tariff_id() is None:
@@ -58,7 +58,7 @@ async def activate_trial_subscription(callback: CallbackQuery, state: FSMContext
 
     user_id = callback.from_user.id
 
-    if not is_trial_enabled():
+    if not new_trials_enabled() or not is_trial_enabled():
         await callback.answer('❌ Пробная подписка недоступна', show_alert=True)
         return
     tariff_id = get_trial_tariff_id()

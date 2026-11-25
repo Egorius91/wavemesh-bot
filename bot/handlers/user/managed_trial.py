@@ -5,7 +5,7 @@ from aiogram.filters import Command, StateFilter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.services.internal_api import InternalApiError, internal_api_client, validate_trial_user_id
-from bot.services.runtime_mode import saas_client_mode_enabled
+from bot.services.runtime_mode import new_trials_enabled, saas_client_mode_enabled
 from bot.utils.text import safe_edit_or_send
 from .payments.payment_return import process_ready_payment_return
 from bot.services.private_chat import private_actor_id, private_message_for
@@ -26,21 +26,38 @@ def _buttons(*, activate: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def _canonical_user_id(telegram_id: int) -> str:
+    dashboard = await internal_api_client.get_telegram_dashboard(telegram_id)
+    user = dashboard.get("user")
+    return validate_trial_user_id(user.get("user_id") if isinstance(user, dict) else None)
+
+
+async def trial_menu_visible(telegram_id: int) -> bool:
+    try:
+        user_id = await _canonical_user_id(telegram_id)
+    except InternalApiError:
+        return False
+    try:
+        await internal_api_client.get_trial(user_id)
+    except InternalApiError as error:
+        return error.status == 404 and error.code == "TRIAL_NOT_ACTIVATED"
+    return True
+
+
 async def _show(message: Message, telegram_id: int, *, activate: bool = False) -> None:
     # Material must never be posted to a group or a different user's chat.
     if not saas_client_mode_enabled() or private_message_for(message, telegram_id) is None:
         return
+    request_activation = activate and new_trials_enabled()
     try:
-        dashboard = await internal_api_client.get_telegram_dashboard(telegram_id)
-        user = dashboard.get("user")
-        user_id = validate_trial_user_id(user.get("user_id") if isinstance(user, dict) else None)
-        if activate:
+        user_id = await _canonical_user_id(telegram_id)
+        if request_activation:
             trial = await internal_api_client.activate_trial(user_id)
         else:
             try:
                 trial = await internal_api_client.get_trial(user_id)
             except InternalApiError as error:
-                if error.status != 404:
+                if error.status != 404 or error.code != "TRIAL_NOT_ACTIVATED" or not new_trials_enabled():
                     raise
                 await safe_edit_or_send(message,
                     "🎁 <b>Пробный доступ WaveMesh</b>\n\n"
@@ -62,10 +79,12 @@ async def _show(message: Message, telegram_id: int, *, activate: bool = False) -
     except InternalApiError as error:
         if error.code == "LEGACY_TRIAL_RECONCILIATION_REQUIRED":
             text = "Ваш прежний пробный доступ требует проверки. Обратитесь за помощью; новая активация не требуется."
+        elif error.code == "NEW_TRIALS_CLOSED" or (error.status == 404 and not new_trials_enabled()):
+            text = "Новые пробные подключения сейчас закрыты."
         elif error.code in {"MANAGED_TRIAL_PIPELINE_DISABLED", "COMMERCIAL_CUTOVER_DISABLED",
                             "TRIAL_OFFER_UNAVAILABLE", "TRIAL_TARIFF_UNAVAILABLE", "NO_COMMAND_READY_ENTRY_NODE"}:
             text = "Пробный доступ сейчас недоступен. Проверьте статус позже."
-        elif activate:
+        elif request_activation:
             text = "Результат активации пока не подтверждён. Проверьте статус: если запрос выполнен, откроется тот же доступ."
         else:
             text = "Не удалось проверить пробный доступ. Повторите проверку позже."

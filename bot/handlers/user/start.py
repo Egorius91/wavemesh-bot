@@ -10,7 +10,7 @@ from config import ADMIN_IDS
 from database.requests import get_or_create_user, is_user_banned, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
 from bot.utils.text import escape_html, safe_edit_or_send
 from bot.services.internal_api import schedule_telegram_user_upsert
-from bot.services.runtime_mode import saas_client_mode_enabled
+from bot.services.runtime_mode import new_trials_enabled, saas_client_mode_enabled
 from bot.services.channel_gate import (
     has_passed_channel_gate,
     mark_channel_gate_passed,
@@ -145,14 +145,13 @@ async def _render_main_page(target, force_new: bool = False):
     tariff_text = _build_tariff_text()
 
     # Динамическая видимость кнопок
-    show_trial = (
-        saas_client_mode_enabled()
-        or (
-            is_trial_enabled()
-            and get_trial_tariff_id() is not None
-            and not has_used_trial(user_id)
-        )
-    )
+    show_trial = False
+    if new_trials_enabled():
+        if saas_client_mode_enabled():
+            from .managed_trial import trial_menu_visible
+            show_trial = await trial_menu_visible(user_id)
+        else:
+            show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and not has_used_trial(user_id)
     show_referral = is_referral_enabled()
 
     visibility = {
